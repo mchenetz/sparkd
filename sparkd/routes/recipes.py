@@ -1,0 +1,72 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, Request, Response
+
+from sparkd.errors import ValidationError
+from sparkd.schemas.recipe import RecipeSpec
+from sparkd.services.library import LibraryService
+from sparkd.services.recipe import RecipeService
+
+router = APIRouter(prefix="/recipes", tags=["recipes"])
+
+
+def _lib(request: Request) -> LibraryService:
+    return request.app.state.library
+
+
+def _rs(request: Request) -> RecipeService:
+    return request.app.state.recipes
+
+
+@router.get("", response_model=list[RecipeSpec])
+def list_recipes(box: str | None = None, lib: LibraryService = Depends(_lib)) -> list[RecipeSpec]:
+    return lib.list_recipes(box_id=box)
+
+
+@router.post("", response_model=RecipeSpec, status_code=201)
+def create_recipe(spec: RecipeSpec, lib: LibraryService = Depends(_lib)) -> RecipeSpec:
+    lib.save_recipe(spec)
+    return spec
+
+
+@router.get("/{name}", response_model=RecipeSpec)
+def get_recipe(
+    name: str, box: str | None = None, lib: LibraryService = Depends(_lib)
+) -> RecipeSpec:
+    return lib.load_recipe(name, box_id=box)
+
+
+@router.put("/{name}", response_model=RecipeSpec)
+def put_recipe(
+    name: str, spec: RecipeSpec, lib: LibraryService = Depends(_lib)
+) -> RecipeSpec:
+    if spec.name != name:
+        raise ValidationError("path name and body name disagree")
+    lib.save_recipe(spec)
+    return spec
+
+
+@router.delete("/{name}", status_code=204)
+def delete_recipe(name: str, lib: LibraryService = Depends(_lib)) -> Response:
+    lib.delete_recipe(name)
+    return Response(status_code=204)
+
+
+@router.post("/{name}/validate")
+async def validate_recipe(
+    name: str,
+    box: str,
+    lib: LibraryService = Depends(_lib),
+    rs: RecipeService = Depends(_rs),
+) -> dict:
+    spec = lib.load_recipe(name, box_id=box)
+    issues = await rs.validate(spec, box)
+    return {"ok": not issues, "issues": issues}
+
+
+@router.post("/{name}/sync")
+async def sync_recipe(
+    name: str, box: str, rs: RecipeService = Depends(_rs)
+) -> dict:
+    await rs.sync(name, box)
+    return {"ok": True}
