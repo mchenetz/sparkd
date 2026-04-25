@@ -1294,7 +1294,7 @@ async def pool():
     await p.close_all()
 
 
-async def test_run_returns_stdout(pool, fake_box):
+async def test_run_returns_stdout(fake_box, pool):
     box, port = fake_box
     box.reply("echo hi", stdout="hi\n")
     target = SSHTarget(host="127.0.0.1", port=port, user="x", use_agent=False, password="y")
@@ -1303,7 +1303,7 @@ async def test_run_returns_stdout(pool, fake_box):
     assert result.exit_status == 0
 
 
-async def test_reuses_connection(pool, fake_box):
+async def test_reuses_connection(fake_box, pool):
     box, port = fake_box
     box.reply("a", stdout="A")
     box.reply("b", stdout="B")
@@ -1314,7 +1314,7 @@ async def test_reuses_connection(pool, fake_box):
     assert pool._conn_count(target) == 1
 
 
-async def test_reconnects_after_close(pool, fake_box):
+async def test_reconnects_after_close(fake_box, pool):
     box, port = fake_box
     box.reply("a", stdout="A")
     target = SSHTarget(host="127.0.0.1", port=port, user="x", use_agent=False, password="y")
