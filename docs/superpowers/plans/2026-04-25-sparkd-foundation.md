@@ -1746,7 +1746,7 @@ class BoxService:
         caps = BoxCapabilities(
             gpu_count=len(gpus),
             gpu_model=gpu_model,
-            vram_per_gpu_gb=vram_mib // 1024,
+            vram_per_gpu_gb=round(vram_mib / 1000),
             cuda_version=cuda,
             ib_interface=ib_iface,
             captured_at=datetime.now(timezone.utc),
