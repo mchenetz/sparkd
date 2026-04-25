@@ -1,0 +1,49 @@
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from sparkd.app import build_app
+from sparkd.db.engine import init_engine
+from sparkd.ssh.pool import SSHTarget
+
+
+@pytest.fixture
+async def env(sparkd_home, fake_box, monkeypatch):
+    await init_engine(create_all=True)
+    app = build_app()
+    box, port = fake_box
+    monkeypatch.setattr(
+        type(app.state.boxes),
+        "_target_for",
+        lambda _self, _row: SSHTarget(
+            host="127.0.0.1", port=port, user="x", use_agent=False, password="y"
+        ),
+    )
+
+    async def fake_validate(_self, _spec, _box_id):
+        return []
+
+    monkeypatch.setattr(type(app.state.recipes), "validate", fake_validate)
+
+    async def fake_sync(_self, *_a, **_k):
+        return None
+
+    monkeypatch.setattr(type(app.state.launches), "_sync_files", fake_sync)
+    box.reply(
+        "bash -lc 'cd ~/spark-vllm-docker && ./run-recipe.sh r1' & echo $!",
+        stdout="12345\n",
+    )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c, app, box
+    await app.state.pool.close_all()
+
+
+async def test_launch_creates_record(env):
+    client, _app, _box = env
+    bid = (
+        await client.post("/boxes", json={"name": "b", "host": "h", "user": "u"})
+    ).json()["id"]
+    await client.post("/recipes", json={"name": "r1", "model": "m"})
+    r = await client.post("/launches", json={"recipe": "r1", "box_id": bid})
+    assert r.status_code == 201
+    assert r.json()["state"] == "starting"
