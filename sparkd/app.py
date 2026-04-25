@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
+from sparkd import logging as sparkd_logging
+from sparkd import paths
 from sparkd.db.engine import init_engine, shutdown
 from sparkd.errors import install_handlers
 from sparkd.routes.boxes import router as boxes_router
@@ -23,12 +28,33 @@ from sparkd.ssh.pool import SSHPool
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    sparkd_logging.configure()
     await init_engine(create_all=True)
     try:
         yield
     finally:
         await app.state.pool.close_all()
         await shutdown()
+
+
+def _mount_spa(app: FastAPI) -> None:
+    static_dir = Path(__file__).parent / "static"
+    if not static_dir.exists():
+        return
+    index = static_dir / "index.html"
+    assets_dir = static_dir / "assets"
+    if assets_dir.exists():
+        app.mount(
+            "/assets",
+            StaticFiles(directory=str(assets_dir)),
+            name="assets",
+        )
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa(full_path: str):  # noqa: ARG001
+        if index.exists():
+            return FileResponse(index)
+        return {"error": "frontend not built"}
 
 
 def build_app() -> FastAPI:
@@ -55,4 +81,14 @@ def build_app() -> FastAPI:
     app.include_router(status_router)
     app.include_router(jobs_router)
     app.include_router(ws_router)
+
+    @app.get("/healthz", include_in_schema=False)
+    async def healthz() -> dict:
+        return {
+            "db": "ok",
+            "ssh_pool_size": len(app.state.pool._conns),
+            "sparkd_home": str(paths.root()),
+        }
+
+    _mount_spa(app)
     return app
