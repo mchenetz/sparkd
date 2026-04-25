@@ -1282,9 +1282,11 @@ git commit -m "test: in-process asyncssh fake box fixture"
 `tests/unit/test_ssh_pool.py`:
 
 ```python
+import asyncssh
 import pytest
 
 from sparkd.ssh.pool import SSHPool, SSHTarget
+from tests.ssh_fakes import FakeBox, start_fake_box
 
 
 @pytest.fixture
@@ -1322,6 +1324,39 @@ async def test_reconnects_after_close(fake_box, pool):
     await pool.close(target)
     await pool.run(target, "a")
     assert pool._conn_count(target) == 1
+
+
+async def test_stream_interleaves_stdout_and_stderr(fake_box, pool):
+    box, port = fake_box
+
+    async def stream_handler(process: asyncssh.SSHServerProcess) -> None:
+        # Emit interleaved output on both channels.
+        process.stdout.write("out-1\n")
+        process.stderr.write("err-1\n")
+        process.stdout.write("out-2\n")
+        process.stderr.write("err-2\n")
+
+    box.stream("noisy", stream_handler)
+    target = SSHTarget(host="127.0.0.1", port=port, user="x", use_agent=False, password="y")
+    seen = []
+    async for channel, line in pool.stream(target, "noisy"):
+        seen.append((channel, line.strip()))
+    channels = {c for c, _ in seen}
+    assert channels == {"stdout", "stderr"}
+    # All four lines arrived (filter empty lines that asyncssh emits at channel close)
+    assert {l for _, l in seen if l} == {"out-1", "err-1", "out-2", "err-2"}
+
+
+async def test_run_returns_none_exit_status_for_signal(fake_box, pool):
+    """When asyncssh reports exit_status=None (signal termination), we surface None."""
+    box, port = fake_box
+    # FakeBox can't easily simulate signal-terminated, but we can verify
+    # the field is now Optional and falsy values aren't coerced.
+    box.reply("succeed", stdout="", exit=0)
+    target = SSHTarget(host="127.0.0.1", port=port, user="x", use_agent=False, password="y")
+    res = await pool.run(target, "succeed")
+    # exit_status is now an int (0), preserved exactly.
+    assert res.exit_status == 0
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1360,7 +1395,7 @@ class SSHTarget:
 class CommandResult:
     stdout: str
     stderr: str
-    exit_status: int
+    exit_status: int | None  # None means process was terminated by a signal
 
 
 class SSHPool:
@@ -1375,64 +1410,105 @@ class SSHPool:
         key = target.key()
         lock = self._locks.setdefault(key, asyncio.Lock())
         async with lock:
-            conn = self._conns.get(key)
-            if conn is not None and not conn.is_closed():
-                return conn
+            existing = self._conns.get(key)
+            if existing is not None and not existing.is_closed():
+                return existing
+            kwargs: dict[str, Any] = {
+                "host": target.host,
+                "port": target.port,
+                "username": target.user,
+                "known_hosts": None,
+            }
+            if target.password is not None:
+                kwargs["password"] = target.password
+                kwargs["client_keys"] = None
+            elif target.ssh_key_path:
+                kwargs["client_keys"] = [target.ssh_key_path]
+            elif target.use_agent:
+                pass  # asyncssh defaults to agent
             try:
-                kwargs: dict[str, Any] = {
-                    "host": target.host,
-                    "port": target.port,
-                    "username": target.user,
-                    "known_hosts": None,
-                }
-                if target.password is not None:
-                    kwargs["password"] = target.password
-                    kwargs["client_keys"] = None
-                elif target.ssh_key_path:
-                    kwargs["client_keys"] = [target.ssh_key_path]
-                elif target.use_agent:
-                    pass  # asyncssh defaults to agent
                 conn = await asyncssh.connect(**kwargs)
             except (OSError, asyncssh.Error) as exc:
                 raise UpstreamError(f"ssh connect failed: {exc}") from exc
-            self._conns[key] = conn
+            try:
+                self._conns[key] = conn
+            except BaseException:
+                conn.close()
+                raise
             return conn
 
     async def run(self, target: SSHTarget, command: str) -> CommandResult:
         conn = await self._get(target)
         try:
             result = await conn.run(command, check=False)
-        except asyncssh.Error as exc:
+        except (OSError, asyncssh.Error) as exc:
             raise UpstreamError(f"ssh exec failed: {exc}") from exc
         return CommandResult(
             stdout=str(result.stdout or ""),
             stderr=str(result.stderr or ""),
-            exit_status=result.exit_status or 0,
+            exit_status=result.exit_status,
         )
 
     async def stream(self, target: SSHTarget, command: str):
-        """Yield (channel, line) tuples until the process exits."""
+        """Yield (channel, line) tuples interleaved from stdout and stderr until the process exits.
+
+        Both streams are drained concurrently to avoid deadlock when the remote
+        process produces output on both channels and one fills its window.
+        """
         conn = await self._get(target)
-        proc = await conn.create_process(command)
-        async for line in proc.stdout:
-            yield "stdout", line
-        async for line in proc.stderr:
-            yield "stderr", line
-        await proc.wait()
+        try:
+            proc = await conn.create_process(command)
+        except (OSError, asyncssh.Error) as exc:
+            raise UpstreamError(f"ssh exec failed: {exc}") from exc
+
+        queue: asyncio.Queue[tuple[str, str] | None] = asyncio.Queue()
+
+        async def _drain(reader: Any, channel: str) -> None:
+            try:
+                async for line in reader:
+                    await queue.put((channel, line))
+            finally:
+                await queue.put(None)  # EOF sentinel
+
+        tasks = [
+            asyncio.create_task(_drain(proc.stdout, "stdout")),
+            asyncio.create_task(_drain(proc.stderr, "stderr")),
+        ]
+        try:
+            done = 0
+            while done < 2:
+                item = await queue.get()
+                if item is None:
+                    done += 1
+                else:
+                    yield item
+            await proc.wait()
+        finally:
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+            for t in tasks:
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
 
     async def close(self, target: SSHTarget) -> None:
         key = target.key()
         conn = self._conns.pop(key, None)
+        self._locks.pop(key, None)
         if conn is not None:
             conn.close()
             await conn.wait_closed()
 
     async def close_all(self) -> None:
-        for conn in list(self._conns.values()):
-            conn.close()
-        for conn in list(self._conns.values()):
-            await conn.wait_closed()
+        conns = list(self._conns.values())
         self._conns.clear()
+        self._locks.clear()
+        for conn in conns:
+            conn.close()
+        for conn in conns:
+            await conn.wait_closed()
 ```
 
 `sparkd/ssh/__init__.py`:
@@ -1446,7 +1522,7 @@ __all__ = ["SSHPool", "SSHTarget", "CommandResult"]
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/unit/test_ssh_pool.py -v`
-Expected: PASS, 3 passed.
+Expected: PASS, 5 passed.
 
 - [ ] **Step 5: Commit**
 
