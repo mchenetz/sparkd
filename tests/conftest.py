@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 import pytest
@@ -17,4 +18,7 @@ async def fake_box():
     server, port = await start_fake_box(box)
     yield box, port
     server.close()
-    await server.wait_closed()
+    try:
+        await asyncio.wait_for(server.wait_closed(), timeout=2.0)
+    except asyncio.TimeoutError:
+        pass
