@@ -157,7 +157,6 @@ dist/
 .coverage
 htmlcov/
 .env
-~/.sparkd/
 docs/superpowers/specs/*.draft.md
 ```
 
@@ -197,7 +196,6 @@ dependencies = [
   "alembic>=1.13",
   "click>=8.1",
   "structlog>=24.4",
-  "tomli>=2.0; python_version < '3.11'",
   "keyring>=25.4",
   "pyyaml>=6.0",
   "httpx>=0.27",
@@ -225,6 +223,7 @@ packages = ["sparkd"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 markers = ["e2e: requires a real DGX Spark box (set SPARKD_E2E_BOX)"]
 testpaths = ["tests"]
 

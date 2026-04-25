@@ -13,5 +13,4 @@ dist/
 .coverage
 htmlcov/
 .env
-~/.sparkd/
 docs/superpowers/specs/*.draft.md
