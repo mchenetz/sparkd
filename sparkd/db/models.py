@@ -58,3 +58,17 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String)
     target: Mapped[str] = mapped_column(String)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class AdvisorSessionRow(Base):
+    __tablename__ = "advisor_sessions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    kind: Mapped[str] = mapped_column(String)  # recipe|optimize|mod
+    target_box_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    target_recipe_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    hf_model_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    messages_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    input_tokens: Mapped[int] = mapped_column(default=0)
+    output_tokens: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
