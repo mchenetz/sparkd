@@ -10,11 +10,22 @@ export type UpstreamSyncResult = {
   errors: { name: string; message: string }[];
 };
 
-export function useSyncUpstream() {
+type Body = { repo?: string; branch?: string; force?: boolean };
+
+export function useSyncUpstreamRecipes() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { repo?: string; branch?: string; force?: boolean }) =>
+    mutationFn: (body: Body) =>
       api.post<UpstreamSyncResult>("/recipes/sync-upstream", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["recipes"] }),
+  });
+}
+
+export function useSyncUpstreamMods() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Body) =>
+      api.post<UpstreamSyncResult>("/mods/sync-upstream", body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["mods"] }),
   });
 }

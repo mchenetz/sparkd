@@ -1,56 +1,17 @@
-import { KeyRound, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { useState } from "react";
 
 import AdvisorChat from "../components/AdvisorChat";
 import { Card } from "../components/Card";
 import PageHeader from "../components/PageHeader";
 import RecipeDraftPane from "../components/RecipeDraftPane";
+import SetupGate from "../components/SetupGate";
 import { useBoxes } from "../hooks/useBoxes";
 import {
   RecipeDraft,
-  useAdvisorSetup,
-  useAdvisorStatus,
   useCreateAdvisorSession,
   useGenerateRecipe,
 } from "../hooks/useAdvisor";
-
-function SetupGate({ children }: { children: React.ReactNode }) {
-  const status = useAdvisorStatus();
-  const setup = useAdvisorSetup();
-  const [key, setKey] = useState("");
-  if (status.isLoading) return <Card>connecting…</Card>;
-  if (status.data?.configured) return <>{children}</>;
-  return (
-    <Card ai>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-        <KeyRound size={16} style={{ color: "var(--accent-ai)" }} />
-        <h3>Connect to Anthropic</h3>
-      </div>
-      <p style={{ color: "var(--fg-secondary)", fontSize: 13, marginBottom: 14, maxWidth: 560 }}>
-        sparkd uses Claude to translate Hugging Face models and box capabilities into vLLM
-        recipes. Your key is stored in the OS keyring (Keychain / Secret Service / Credential
-        Manager) — never in this repo or its database.
-      </p>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <input
-          type="password"
-          className="mono"
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-          placeholder="sk-ant-..."
-          style={{ flex: 1, maxWidth: 480 }}
-        />
-        <button
-          className="ai"
-          disabled={!key || setup.isPending}
-          onClick={() => setup.mutate({ anthropic_api_key: key })}
-        >
-          save key
-        </button>
-      </div>
-    </Card>
-  );
-}
 
 export default function AdvisorPage() {
   const boxes = useBoxes();
@@ -71,7 +32,7 @@ export default function AdvisorPage() {
             Generate a <em style={{ color: "var(--accent-ai)" }}>recipe</em>
           </>
         }
-        subtitle="Pick a target box and a Hugging Face model. Claude reads the model card and the box's nvidia-smi capabilities, then proposes a vLLM serve recipe with rationale."
+        subtitle="Pick a Hugging Face model. Claude reads the model card and target hardware, then proposes a vLLM serve recipe with rationale. Box selection is optional — defaults to canonical DGX Spark specs."
       />
       <SetupGate>
         <Card ai style={{ marginBottom: 16 }}>
@@ -95,7 +56,7 @@ export default function AdvisorPage() {
             }}
           >
             <select value={boxId} onChange={(e) => setBoxId(e.target.value)}>
-              <option value="">— target box —</option>
+              <option value="">DGX Spark (default specs)</option>
               {(boxes.data ?? []).map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}
@@ -110,13 +71,13 @@ export default function AdvisorPage() {
             />
             <button
               className="ai"
-              disabled={!boxId || !hfId || busy}
+              disabled={!hfId || busy}
               onClick={async () => {
                 setText("");
                 setDraft(null);
                 const r = await create.mutateAsync({
                   kind: "recipe",
-                  target_box_id: boxId,
+                  target_box_id: boxId || null,
                   hf_model_id: hfId,
                 });
                 const out = await gen.mutateAsync(r.id);

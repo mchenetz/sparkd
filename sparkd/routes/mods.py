@@ -4,13 +4,27 @@ from fastapi import APIRouter, Depends, Request, Response
 
 from sparkd.errors import ValidationError
 from sparkd.schemas.mod import ModSpec
+from sparkd.schemas.upstream import UpstreamSyncRequest, UpstreamSyncResult
 from sparkd.services.mod import ModService
+from sparkd.services.upstream import UpstreamService
 
 router = APIRouter(prefix="/mods", tags=["mods"])
 
 
 def _svc(request: Request) -> ModService:
     return request.app.state.mods
+
+
+def _upstream(request: Request) -> UpstreamService:
+    return request.app.state.upstream
+
+
+@router.post("/sync-upstream", response_model=UpstreamSyncResult)
+async def sync_upstream(
+    body: UpstreamSyncRequest,
+    svc: UpstreamService = Depends(_upstream),
+) -> UpstreamSyncResult:
+    return await svc.sync_mods(body)
 
 
 @router.get("", response_model=list[ModSpec])

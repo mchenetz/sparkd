@@ -6,7 +6,9 @@ from pydantic import BaseModel, Field
 from sparkd import secrets as sparkd_secrets
 from sparkd.advisor import AnthropicAdapter
 from sparkd.errors import ValidationError
+from sparkd.hardware import default_dgx_spark_caps
 from sparkd.schemas.advisor import AdvisorSession
+from sparkd.schemas.box import BoxCapabilities
 from sparkd.services.advisor import AdvisorService
 from sparkd.services.box import BoxService
 from sparkd.services.hf_catalog import HFCatalogService
@@ -29,6 +31,18 @@ def _boxes(request: Request) -> BoxService:
 
 def _lib(request: Request) -> LibraryService:
     return request.app.state.library
+
+
+async def _resolve_caps(
+    target_box_id: str | None, boxes: BoxService
+) -> BoxCapabilities:
+    """Use real box capabilities when available, else canonical DGX Spark defaults."""
+    if not target_box_id:
+        return default_dgx_spark_caps()
+    try:
+        return await boxes.capabilities(target_box_id)
+    except Exception:  # noqa: BLE001  — degrade gracefully
+        return default_dgx_spark_caps()
 
 
 class CreateSessionBody(BaseModel):
@@ -80,9 +94,7 @@ async def generate_recipe(
     if not sess.hf_model_id:
         raise ValidationError("session has no hf_model_id")
     info = await hf.fetch(sess.hf_model_id)
-    if not sess.target_box_id:
-        raise ValidationError("session has no target_box_id")
-    caps = await boxes.capabilities(sess.target_box_id)
+    caps = await _resolve_caps(sess.target_box_id, boxes)
     draft = None
     deltas: list[str] = []
     async for ev in svc.generate_recipe(
@@ -111,10 +123,10 @@ async def optimize_recipe(
     lib: LibraryService = Depends(_lib),
 ) -> dict:
     sess = await svc.get_session(session_id)
-    if not sess.target_recipe_name or not sess.target_box_id:
-        raise ValidationError("session needs target_recipe_name and target_box_id")
+    if not sess.target_recipe_name:
+        raise ValidationError("session needs target_recipe_name")
     recipe = lib.load_recipe(sess.target_recipe_name, box_id=sess.target_box_id)
-    caps = await boxes.capabilities(sess.target_box_id)
+    caps = await _resolve_caps(sess.target_box_id, boxes)
     draft = None
     deltas: list[str] = []
     async for ev in svc.optimize_recipe(

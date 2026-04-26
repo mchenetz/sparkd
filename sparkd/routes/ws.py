@@ -63,9 +63,10 @@ async def advisor_stream(ws: WebSocket, session_id: str) -> None:
     boxes = ws.app.state.boxes
     sess = await svc.get_session(session_id)
     try:
-        if sess.kind == "recipe" and sess.hf_model_id and sess.target_box_id:
+        if sess.kind == "recipe" and sess.hf_model_id:
             info = await hf.fetch(sess.hf_model_id)
-            caps = await boxes.capabilities(sess.target_box_id)
+            from sparkd.routes.advisor import _resolve_caps
+            caps = await _resolve_caps(sess.target_box_id, boxes)
             stream = svc.generate_recipe(session_id, info=info, caps=caps)
         else:
             await ws.send_json({"type": "error", "message": "missing context"})

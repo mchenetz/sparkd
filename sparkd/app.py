@@ -86,7 +86,9 @@ def build_app() -> FastAPI:
     app.state.status = StatusService(boxes=app.state.boxes, pool=pool)
     app.state.hf = HFCatalogService()
     app.state.mods = ModService()
-    app.state.upstream = UpstreamService(library=app.state.library)
+    app.state.upstream = UpstreamService(
+        library=app.state.library, mods=app.state.mods
+    )
     api_key = sparkd_secrets.get_secret("anthropic_api_key") or ""
     port = AnthropicAdapter(api_key=api_key) if api_key else None
     app.state.advisor = AdvisorService(port=port)
