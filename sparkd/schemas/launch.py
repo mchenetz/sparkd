@@ -29,6 +29,7 @@ class LaunchRecord(BaseModel):
     state: LaunchState
     container_id: str | None
     command: str
+    log_path: str | None = None
     started_at: datetime
     stopped_at: datetime | None
     exit_info: dict[str, Any] | None

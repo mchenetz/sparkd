@@ -24,6 +24,7 @@ def _to_record(row: Launch) -> LaunchRecord:
         state=LaunchState(row.state),
         container_id=row.container_id,
         command=row.command,
+        log_path=row.log_path,
         started_at=row.started_at,
         stopped_at=row.stopped_at,
         exit_info=row.exit_info_json,
