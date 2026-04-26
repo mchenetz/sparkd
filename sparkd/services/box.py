@@ -41,6 +41,24 @@ class BoxService:
             ssh_key_path=row.ssh_key_path,
         )
 
+    async def update(self, box_id: str, body: BoxCreate) -> BoxSpec:
+        """Update a box's connection details. Capabilities aren't touched —
+        if the host changed they'll be refreshed lazily on next access."""
+        async with session_scope() as s:
+            row = await s.get(Box, box_id)
+            if row is None:
+                raise NotFoundError("box", box_id)
+            row.name = body.name
+            row.host = body.host
+            row.port = body.port
+            row.user = body.user
+            row.ssh_key_path = body.ssh_key_path
+            row.use_agent = body.use_agent
+            row.repo_path = body.repo_path
+            row.tags_json = body.tags
+            await s.flush()
+            return _to_spec(row)
+
     async def create(self, body: BoxCreate) -> BoxSpec:
         async with session_scope() as s:
             row = Box(

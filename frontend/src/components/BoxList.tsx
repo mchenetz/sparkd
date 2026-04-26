@@ -1,4 +1,5 @@
 import { Trash2 } from "lucide-react";
+import { Link } from "react-router-dom";
 
 import { Box, useDeleteBox } from "../hooks/useBoxes";
 import { Pill } from "./Card";
@@ -20,19 +21,24 @@ export default function BoxList({ boxes }: { boxes: Box[] }) {
         {boxes.map((b) => (
           <tr key={b.id}>
             <td>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <Pill tone="info">DGX</Pill>
-                <span style={{ fontWeight: 500 }}>{b.name}</span>
-                <span
-                  style={{
-                    fontFamily: "var(--font-mono)",
-                    fontSize: 11,
-                    color: "var(--fg-faint)",
-                  }}
-                >
-                  {b.id.slice(0, 8)}
-                </span>
-              </div>
+              <Link
+                to={`/boxes/${b.id}`}
+                style={{ borderBottom: "none", color: "var(--fg-primary)" }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <Pill tone="info">DGX</Pill>
+                  <span style={{ fontWeight: 500 }}>{b.name}</span>
+                  <span
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 11,
+                      color: "var(--fg-faint)",
+                    }}
+                  >
+                    {b.id.slice(0, 8)}
+                  </span>
+                </div>
+              </Link>
             </td>
             <td>
               <code style={{ color: "var(--fg-secondary)" }}>

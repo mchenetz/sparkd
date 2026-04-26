@@ -29,6 +29,13 @@ async def get_box(box_id: str, svc: BoxService = Depends(_svc)) -> BoxSpec:
     return await svc.get(box_id)
 
 
+@router.put("/{box_id}", response_model=BoxSpec)
+async def update_box(
+    box_id: str, body: BoxCreate, svc: BoxService = Depends(_svc)
+) -> BoxSpec:
+    return await svc.update(box_id, body)
+
+
 @router.delete("/{box_id}", status_code=204)
 async def delete_box(box_id: str, svc: BoxService = Depends(_svc)) -> Response:
     await svc.delete(box_id)

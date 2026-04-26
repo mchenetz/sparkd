@@ -2,6 +2,7 @@ import { Route, Routes } from "react-router-dom";
 
 import Shell from "./components/Shell";
 import AdvisorPage from "./pages/AdvisorPage";
+import BoxDetailPage from "./pages/BoxDetailPage";
 import BoxesPage from "./pages/BoxesPage";
 import LaunchPage from "./pages/LaunchPage";
 import ModDetailPage from "./pages/ModDetailPage";
@@ -17,6 +18,7 @@ export default function App() {
     <Shell>
       <Routes>
         <Route path="/" element={<BoxesPage />} />
+        <Route path="/boxes/:id" element={<BoxDetailPage />} />
         <Route path="/recipes" element={<RecipesPage />} />
         <Route path="/recipes/:name" element={<RecipeDetailPage />} />
         <Route path="/launch" element={<LaunchPage />} />
