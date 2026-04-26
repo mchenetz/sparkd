@@ -53,3 +53,29 @@ async def status_stream(ws: WebSocket, box_id: str) -> None:
             await asyncio.sleep(5.0)
     except WebSocketDisconnect:
         return
+
+
+@router.websocket("/ws/advisor/{session_id}")
+async def advisor_stream(ws: WebSocket, session_id: str) -> None:
+    await ws.accept()
+    svc = ws.app.state.advisor
+    hf = ws.app.state.hf
+    boxes = ws.app.state.boxes
+    sess = await svc.get_session(session_id)
+    try:
+        if sess.kind == "recipe" and sess.hf_model_id and sess.target_box_id:
+            info = await hf.fetch(sess.hf_model_id)
+            caps = await boxes.capabilities(sess.target_box_id)
+            stream = svc.generate_recipe(session_id, info=info, caps=caps)
+        else:
+            await ws.send_json({"type": "error", "message": "missing context"})
+            await ws.close(code=1003)
+            return
+        async for ev in stream:
+            await ws.send_json(ev)
+        await ws.send_json({"type": "done"})
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:  # noqa: BLE001
+        await ws.send_json({"type": "error", "message": str(exc)})
+        await ws.close(code=1011)

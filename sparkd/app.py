@@ -9,18 +9,26 @@ from fastapi.staticfiles import StaticFiles
 
 from sparkd import logging as sparkd_logging
 from sparkd import paths
+from sparkd import secrets as sparkd_secrets
+from sparkd.advisor import AnthropicAdapter
 from sparkd.db.engine import init_engine, shutdown
 from sparkd.errors import install_handlers
+from sparkd.routes.advisor import router as advisor_router
 from sparkd.routes.boxes import router as boxes_router
+from sparkd.routes.hf import router as hf_router
 from sparkd.routes.jobs import router as jobs_router
 from sparkd.routes.launches import router as launches_router
+from sparkd.routes.mods import router as mods_router
 from sparkd.routes.recipes import router as recipes_router
 from sparkd.routes.status import router as status_router
 from sparkd.routes.ws import router as ws_router
+from sparkd.services.advisor import AdvisorService
 from sparkd.services.box import BoxService
+from sparkd.services.hf_catalog import HFCatalogService
 from sparkd.services.jobs import JobRegistry
 from sparkd.services.launch import LaunchService
 from sparkd.services.library import LibraryService
+from sparkd.services.mod import ModService
 from sparkd.services.recipe import RecipeService
 from sparkd.services.status import StatusService
 from sparkd.ssh.pool import SSHPool
@@ -75,11 +83,19 @@ def build_app() -> FastAPI:
         pool=pool,
     )
     app.state.status = StatusService(boxes=app.state.boxes, pool=pool)
+    app.state.hf = HFCatalogService()
+    app.state.mods = ModService()
+    api_key = sparkd_secrets.get_secret("anthropic_api_key") or ""
+    port = AnthropicAdapter(api_key=api_key) if api_key else None
+    app.state.advisor = AdvisorService(port=port)
     app.include_router(boxes_router)
     app.include_router(recipes_router)
     app.include_router(launches_router)
     app.include_router(status_router)
     app.include_router(jobs_router)
+    app.include_router(hf_router)
+    app.include_router(mods_router)
+    app.include_router(advisor_router)
     app.include_router(ws_router)
 
     @app.get("/healthz", include_in_schema=False)
