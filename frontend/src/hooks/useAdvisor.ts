@@ -30,10 +30,16 @@ export type ModDraft = {
   rationale: string;
 };
 
+export type AdvisorStatus = {
+  configured: boolean;
+  active_provider?: string;
+  active_model?: string;
+};
+
 export function useAdvisorStatus() {
   return useQuery({
     queryKey: ["advisor", "status"],
-    queryFn: () => api.get<{ configured: boolean }>("/advisor/status"),
+    queryFn: () => api.get<AdvisorStatus>("/advisor/status"),
   });
 }
 

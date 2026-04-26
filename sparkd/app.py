@@ -9,8 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from sparkd import logging as sparkd_logging
 from sparkd import paths
-from sparkd import secrets as sparkd_secrets
-from sparkd.advisor import AnthropicAdapter
+from sparkd.services import advisor_config
 from sparkd.db.engine import init_engine, shutdown
 from sparkd.errors import install_handlers
 from sparkd.routes.advisor import router as advisor_router
@@ -89,9 +88,7 @@ def build_app() -> FastAPI:
     app.state.upstream = UpstreamService(
         library=app.state.library, mods=app.state.mods
     )
-    api_key = sparkd_secrets.get_secret("anthropic_api_key") or ""
-    port = AnthropicAdapter(api_key=api_key) if api_key else None
-    app.state.advisor = AdvisorService(port=port)
+    app.state.advisor = AdvisorService(port=advisor_config.build_port())
     # All HTTP API endpoints are namespaced under /api so SPA routes like
     # /recipes/:name don't collide with the API /api/recipes/{name}.
     # WebSocket routes stay at /ws/... — they don't conflict with SPA routes

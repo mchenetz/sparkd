@@ -3,12 +3,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
-from sparkd import secrets as sparkd_secrets
-from sparkd.advisor import AnthropicAdapter
-from sparkd.errors import ValidationError
+from sparkd.advisor.providers import PROVIDERS as PROVIDERS_CATALOG
+from sparkd.errors import NotFoundError, ValidationError
 from sparkd.hardware import default_dgx_spark_caps
 from sparkd.schemas.advisor import AdvisorSession
 from sparkd.schemas.box import BoxCapabilities
+from sparkd.services import advisor_config
 from sparkd.services.advisor import AdvisorService
 from sparkd.services.box import BoxService
 from sparkd.services.hf_catalog import HFCatalogService
@@ -177,6 +177,9 @@ async def propose_mod(
 
 
 class SetupBody(BaseModel):
+    """Legacy setup — kept for backward compat. Equivalent to switching the
+    active provider to anthropic and saving the key."""
+
     anthropic_api_key: str
 
 
@@ -185,12 +188,88 @@ def setup(body: SetupBody, request: Request) -> dict:
     if not body.anthropic_api_key.strip():
         raise ValidationError("anthropic_api_key is required")
     key = body.anthropic_api_key.strip()
-    sparkd_secrets.set_secret("anthropic_api_key", key)
-    request.app.state.advisor.port = AnthropicAdapter(api_key=key)
+    advisor_config.set_api_key("anthropic", key)
+    cfg = advisor_config.load_config()
+    cfg.active_provider = "anthropic"
+    if not cfg.get_state("anthropic").model:
+        cfg.get_state("anthropic").model = "claude-opus-4-7"
+    advisor_config.save_config(cfg)
+    request.app.state.advisor.port = advisor_config.build_port(cfg)
     return {"ok": True}
 
 
 @router.get("/status")
 def status(request: Request) -> dict:
+    cfg = advisor_config.load_config()
+    pdef_id = cfg.active_provider
+    state = cfg.get_state(pdef_id)
     port = getattr(request.app.state.advisor, "port", None)
-    return {"configured": port is not None}
+    return {
+        "configured": port is not None,
+        "active_provider": pdef_id,
+        "active_model": state.model,
+    }
+
+
+@router.get("/providers")
+def list_providers() -> dict:
+    cfg = advisor_config.load_config()
+    return {
+        "active_provider": cfg.active_provider,
+        "providers": advisor_config.provider_summary(),
+        "configured": [
+            pid
+            for pid, _ in cfg.providers.items()
+            if advisor_config.has_api_key(pid)
+        ],
+    }
+
+
+class ProviderConfigBody(BaseModel):
+    provider: str
+    model: str
+    base_url: str | None = None
+    api_key: str | None = None  # optional — only sent when changing it
+    set_active: bool = True
+
+
+@router.put("/config")
+def put_config(body: ProviderConfigBody, request: Request) -> dict:
+    pdef = next((p for p in PROVIDERS_CATALOG if p.id == body.provider), None)
+    if pdef is None:
+        raise NotFoundError("provider", body.provider)
+    if not body.model.strip():
+        raise ValidationError("model is required")
+    if pdef.requires_key:
+        existing_key = advisor_config.get_api_key(body.provider)
+        if not body.api_key and not existing_key:
+            raise ValidationError(
+                f"{body.provider}: api_key required (provider does not allow anonymous access)"
+            )
+    if body.api_key:
+        advisor_config.set_api_key(body.provider, body.api_key.strip())
+    cfg = advisor_config.load_config()
+    state = cfg.get_state(body.provider)
+    state.model = body.model.strip()
+    state.base_url = (body.base_url or "").strip() or None
+    if body.set_active:
+        cfg.active_provider = body.provider
+    advisor_config.save_config(cfg)
+    request.app.state.advisor.port = advisor_config.build_port(cfg)
+    return {
+        "ok": True,
+        "active_provider": cfg.active_provider,
+        "active_model": cfg.get_state(cfg.active_provider).model,
+    }
+
+
+@router.get("/config")
+def get_config() -> dict:
+    cfg = advisor_config.load_config()
+    return {
+        "active_provider": cfg.active_provider,
+        "providers": {
+            pid: {"model": s.model, "base_url": s.base_url}
+            for pid, s in cfg.providers.items()
+        },
+    }

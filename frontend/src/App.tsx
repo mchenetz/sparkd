@@ -9,6 +9,7 @@ import ModsPage from "./pages/ModsPage";
 import OptimizePage from "./pages/OptimizePage";
 import RecipeDetailPage from "./pages/RecipeDetailPage";
 import RecipesPage from "./pages/RecipesPage";
+import SettingsPage from "./pages/SettingsPage";
 import StatusPage from "./pages/StatusPage";
 
 export default function App() {
@@ -24,6 +25,7 @@ export default function App() {
         <Route path="/optimize" element={<OptimizePage />} />
         <Route path="/mods" element={<ModsPage />} />
         <Route path="/mods/:name" element={<ModDetailPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
       </Routes>
     </Shell>
   );

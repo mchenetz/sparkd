@@ -6,6 +6,7 @@ import {
   FlaskConical,
   Network,
   Rocket,
+  Settings as SettingsIcon,
   Sparkles,
   Wrench,
 } from "lucide-react";
@@ -99,7 +100,7 @@ const NAV: Array<{
   to: string;
   label: string;
   icon: ReactNode;
-  group: "ops" | "ai";
+  group: "ops" | "ai" | "system";
 }> = [
   { to: "/", label: "Boxes", icon: <Network size={16} />, group: "ops" },
   { to: "/recipes", label: "Recipes", icon: <FlaskConical size={16} />, group: "ops" },
@@ -108,6 +109,7 @@ const NAV: Array<{
   { to: "/advisor", label: "Advisor", icon: <Sparkles size={16} />, group: "ai" },
   { to: "/optimize", label: "Optimize", icon: <Wrench size={16} />, group: "ai" },
   { to: "/mods", label: "Mods", icon: <Boxes size={16} />, group: "ai" },
+  { to: "/settings", label: "Settings", icon: <SettingsIcon size={16} />, group: "system" },
 ];
 
 function Sidebar() {
@@ -165,6 +167,11 @@ function Sidebar() {
         {NAV.filter((n) => n.group === "ai").map((n) => (
           <NavItem key={n.to} {...n} />
         ))}
+        <div style={{ height: 14 }} />
+        <SectionLabel>System</SectionLabel>
+        {NAV.filter((n) => n.group === "system").map((n) => (
+          <NavItem key={n.to} {...n} />
+        ))}
       </nav>
 
       <div style={{ flex: 1 }} />
@@ -214,7 +221,7 @@ function NavItem({
   to: string;
   label: string;
   icon: ReactNode;
-  group: "ops" | "ai";
+  group: "ops" | "ai" | "system";
 }) {
   return (
     <NavLink
@@ -244,7 +251,12 @@ function NavItem({
                 top: 8,
                 bottom: 8,
                 width: 2,
-                background: group === "ai" ? "var(--accent-ai)" : "var(--signal-healthy)",
+                background:
+                  group === "ai"
+                    ? "var(--accent-ai)"
+                    : group === "system"
+                    ? "var(--fg-muted)"
+                    : "var(--signal-healthy)",
                 borderRadius: 1,
               }}
             />
