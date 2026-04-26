@@ -69,3 +69,39 @@ class LibraryService:
         if not f.exists():
             raise NotFoundError("recipe", name)
         f.unlink()
+
+    def has_recipe(self, name: str) -> bool:
+        _validate_name(name)
+        return (self._recipes_dir(None) / f"{name}.yaml").exists()
+
+    def save_recipe_raw(self, name: str, yaml_text: str) -> RecipeSpec:
+        """Persist YAML verbatim (for upstream-format recipes) and return a parsed view.
+
+        Use this when the YAML may contain fields outside RecipeSpec (e.g. upstream
+        spark-vllm-docker recipes have `defaults`, `command`, `container`,
+        `recipe_version`). The on-disk file preserves all keys; load_recipe_text()
+        round-trips byte-for-byte for sync-to-box.
+        """
+        _validate_name(name)
+        parsed = yaml.safe_load(yaml_text)
+        if not isinstance(parsed, dict):
+            raise ValidationError("recipe yaml must be a mapping at the top level")
+        if not parsed.get("model"):
+            raise ValidationError(f"recipe {name!r} has no model field")
+        d = self._recipes_dir(None)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{name}.yaml").write_text(yaml_text)
+        # The slug used as filename wins for the parsed view; on-disk YAML untouched.
+        return RecipeSpec(**{**parsed, "name": name})
+
+    def load_recipe_text(self, name: str, *, box_id: str | None = None) -> str:
+        """Return the raw YAML bytes for a recipe — preferring per-box override."""
+        _validate_name(name)
+        if box_id is not None:
+            override = self._recipes_dir(box_id) / f"{name}.yaml"
+            if override.exists():
+                return override.read_text()
+        canonical = self._recipes_dir(None) / f"{name}.yaml"
+        if not canonical.exists():
+            raise NotFoundError("recipe", name)
+        return canonical.read_text()

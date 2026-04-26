@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import shlex
 
-import yaml
-
 from sparkd.db.engine import session_scope
 from sparkd.db.models import Box
 from sparkd.schemas.recipe import RecipeDiff, RecipeSpec
@@ -49,13 +47,17 @@ class RecipeService:
         return issues
 
     async def sync(self, name: str, box_id: str) -> None:
-        spec = self.library.load_recipe(name, box_id=box_id)
+        # Push the raw on-disk YAML so upstream-format recipes (with `defaults`,
+        # `command`, `container`, etc.) round-trip byte-identical and remain
+        # runnable by the box's ./run-recipe.sh.
+        yaml_text = self.library.load_recipe_text(name, box_id=box_id)
+        if not yaml_text.endswith("\n"):
+            yaml_text += "\n"
         box = await self.boxes.get(box_id)
         async with session_scope() as s:
             row = await s.get(Box, box_id)
             target = self.boxes._target_for(row)
         await self.pool.run(target, f"mkdir -p {shlex.quote(box.repo_path)}/recipes")
-        yaml_text = yaml.safe_dump(spec.model_dump(), sort_keys=False)
         cmd = (
             f"cat > {shlex.quote(box.repo_path)}/recipes/{shlex.quote(name)}.yaml "
             f"<<'SPARKD_EOF'\n{yaml_text}SPARKD_EOF\n"
