@@ -1,24 +1,16 @@
 import { GitBranch, Plus, Trash2, Wrench } from "lucide-react";
-import { useState } from "react";
+import { Link } from "react-router-dom";
 
 import { Card, EmptyState, Pill } from "../components/Card";
 import PageHeader from "../components/PageHeader";
 import UpstreamSync from "../components/UpstreamSync";
-import {
-  Recipe,
-  useDeleteRecipe,
-  useRecipes,
-  useSaveRecipe,
-} from "../hooks/useRecipes";
+import { useDeleteRecipe, useRecipes } from "../hooks/useRecipes";
 import { useSyncUpstreamRecipes } from "../hooks/useUpstream";
 
 export default function RecipesPage() {
   const { data } = useRecipes();
-  const save = useSaveRecipe();
   const del = useDeleteRecipe();
   const sync = useSyncUpstreamRecipes();
-  const [name, setName] = useState("");
-  const [model, setModel] = useState("");
   const recipes = data ?? [];
   return (
     <>
@@ -29,79 +21,41 @@ export default function RecipesPage() {
             Recipe <em style={{ color: "var(--fg-muted)" }}>library</em>
           </>
         }
-        subtitle="Canonical vLLM serve configurations. Per-box overrides merge on top when launching."
+        subtitle="Canonical vLLM serve configurations. Click a recipe to edit; per-box overrides merge on top when launching."
         actions={
-          <a
-            href="https://github.com/eugr/spark-vllm-docker"
-            target="_blank"
-            rel="noreferrer"
-            style={{ borderBottom: "none" }}
-            title="upstream repo"
-          >
-            <button className="ghost">
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                <GitBranch size={14} /> upstream
-              </span>
-            </button>
-          </a>
+          <div style={{ display: "flex", gap: 8 }}>
+            <a
+              href="https://github.com/eugr/spark-vllm-docker"
+              target="_blank"
+              rel="noreferrer"
+              style={{ borderBottom: "none" }}
+              title="upstream repo"
+            >
+              <button className="ghost">
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <GitBranch size={14} /> upstream
+                </span>
+              </button>
+            </a>
+            <Link to="/recipes/new" style={{ borderBottom: "none" }}>
+              <button className="primary">
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <Plus size={14} /> new recipe
+                </span>
+              </button>
+            </Link>
+          </div>
         }
       />
 
       <div style={{ display: "grid", gap: 24 }}>
         <UpstreamSync label="recipes" sync={sync} />
 
-        <Card>
-          <div
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 11,
-              color: "var(--fg-muted)",
-              letterSpacing: "0.14em",
-              textTransform: "uppercase",
-              marginBottom: 12,
-            }}
-          >
-            new recipe
-          </div>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!name || !model) return;
-              save.mutate({ name, model, args: {}, env: {}, mods: [] } as Recipe);
-              setName("");
-              setModel("");
-            }}
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 2fr auto",
-              gap: 8,
-            }}
-          >
-            <input
-              className="mono"
-              placeholder="recipe slug (llama-8b-fp8)"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-            <input
-              className="mono"
-              placeholder="huggingface/model-id"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-            />
-            <button type="submit" className="primary" disabled={!name || !model}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                <Plus size={14} /> save
-              </span>
-            </button>
-          </form>
-        </Card>
-
         <Card pad={0}>
           {recipes.length === 0 ? (
             <EmptyState
               title="No recipes saved yet"
-              hint="Add one above, sync from upstream, or have the Advisor generate one."
+              hint="Click 'new recipe' above, sync from upstream, or have the Advisor generate one."
             />
           ) : (
             <table>
@@ -110,6 +64,7 @@ export default function RecipesPage() {
                   <th>recipe</th>
                   <th>model</th>
                   <th>flags</th>
+                  <th>mods</th>
                   <th></th>
                 </tr>
               </thead>
@@ -119,12 +74,12 @@ export default function RecipesPage() {
                   return (
                     <tr key={r.name}>
                       <td>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <Link
+                          to={`/recipes/${encodeURIComponent(r.name)}`}
+                          style={{ borderBottom: "none", color: "var(--fg-primary)" }}
+                        >
                           <span style={{ fontWeight: 500 }}>{r.name}</span>
-                          {r.mods.length > 0 && (
-                            <Pill tone="ai">{r.mods.length} mod</Pill>
-                          )}
-                        </div>
+                        </Link>
                       </td>
                       <td>
                         <code style={{ color: "var(--fg-secondary)" }}>{r.model}</code>
@@ -133,6 +88,23 @@ export default function RecipesPage() {
                         <code style={{ color: "var(--fg-muted)" }}>
                           {flagCount} flag{flagCount === 1 ? "" : "s"}
                         </code>
+                      </td>
+                      <td>
+                        {r.mods.length === 0 ? (
+                          <span style={{ color: "var(--fg-faint)" }}>—</span>
+                        ) : (
+                          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                            {r.mods.map((m) => (
+                              <Link
+                                key={m}
+                                to={`/mods/${encodeURIComponent(m)}`}
+                                style={{ borderBottom: "none" }}
+                              >
+                                <Pill tone="ai">{m}</Pill>
+                              </Link>
+                            ))}
+                          </div>
+                        )}
                       </td>
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                         <a

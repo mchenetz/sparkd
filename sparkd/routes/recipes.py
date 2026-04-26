@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request, Response
+from pydantic import BaseModel
 
 from sparkd.errors import ValidationError
 from sparkd.schemas.recipe import RecipeSpec
@@ -8,6 +9,15 @@ from sparkd.schemas.upstream import UpstreamSyncRequest, UpstreamSyncResult
 from sparkd.services.library import LibraryService
 from sparkd.services.recipe import RecipeService
 from sparkd.services.upstream import UpstreamService
+
+
+class RecipeRawBody(BaseModel):
+    yaml: str
+
+
+class RecipeRawResponse(BaseModel):
+    yaml: str
+    name: str
 
 router = APIRouter(prefix="/recipes", tags=["recipes"])
 
@@ -56,8 +66,27 @@ def put_recipe(
 ) -> RecipeSpec:
     if spec.name != name:
         raise ValidationError("path name and body name disagree")
-    lib.save_recipe(spec)
+    # Preserve upstream-format fields (defaults/command/container/...) when
+    # editing an existing recipe via the form view.
+    lib.update_recipe(spec)
     return spec
+
+
+@router.get("/{name}/raw", response_model=RecipeRawResponse)
+def get_recipe_raw(
+    name: str,
+    box: str | None = None,
+    lib: LibraryService = Depends(_lib),
+) -> RecipeRawResponse:
+    text = lib.load_recipe_text(name, box_id=box)
+    return RecipeRawResponse(name=name, yaml=text)
+
+
+@router.put("/{name}/raw", response_model=RecipeSpec)
+def put_recipe_raw(
+    name: str, body: RecipeRawBody, lib: LibraryService = Depends(_lib)
+) -> RecipeSpec:
+    return lib.save_recipe_raw(name, body.yaml)
 
 
 @router.delete("/{name}", status_code=204)

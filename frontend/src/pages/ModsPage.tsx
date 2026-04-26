@@ -1,5 +1,6 @@
-import { Sparkles, Trash2 } from "lucide-react";
+import { Plus, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
 import AdvisorChat from "../components/AdvisorChat";
 import { Card, EmptyState, Pill } from "../components/Card";
@@ -36,7 +37,16 @@ export default function ModsPage() {
             Mods <em style={{ color: "var(--fg-muted)" }}>& patches</em>
           </>
         }
-        subtitle="Per-model fixes (patches, hooks) that get applied alongside a recipe. Sync the upstream catalog or paste an error log and let Claude propose a fix."
+        subtitle="Per-model fixes (patches, hooks) applied alongside a recipe. Click a mod to edit; sync the upstream catalog or have Claude propose a fix from an error log."
+        actions={
+          <Link to="/mods/new" style={{ borderBottom: "none" }}>
+            <button className="primary">
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <Plus size={14} /> new mod
+              </span>
+            </button>
+          </Link>
+        }
       />
 
       <div style={{ display: "grid", gap: 24 }}>
@@ -65,14 +75,21 @@ export default function ModsPage() {
                   {list.map((m) => (
                     <tr key={m.name}>
                       <td>
-                        <div>
-                          <span style={{ fontWeight: 500 }}>{m.name}</span>
-                          {m.description && (
-                            <div style={{ color: "var(--fg-muted)", fontSize: 12 }}>
-                              {m.description}
-                            </div>
-                          )}
-                        </div>
+                        <Link
+                          to={`/mods/${encodeURIComponent(m.name)}`}
+                          style={{ borderBottom: "none", color: "var(--fg-primary)" }}
+                        >
+                          <div>
+                            <span style={{ fontWeight: 500 }}>{m.name}</span>
+                            {m.description && (
+                              <div
+                                style={{ color: "var(--fg-muted)", fontSize: 12 }}
+                              >
+                                {m.description}
+                              </div>
+                            )}
+                          </div>
+                        </Link>
                       </td>
                       <td>
                         {m.target_models.length > 0 ? (

@@ -7,7 +7,7 @@ export default function PageHeader({
   actions,
   ai,
 }: {
-  eyebrow?: string;
+  eyebrow?: ReactNode;
   title: ReactNode;
   subtitle?: ReactNode;
   actions?: ReactNode;

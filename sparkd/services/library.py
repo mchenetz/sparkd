@@ -74,6 +74,28 @@ class LibraryService:
         _validate_name(name)
         return (self._recipes_dir(None) / f"{name}.yaml").exists()
 
+    def update_recipe(self, spec: RecipeSpec) -> None:
+        """Merge spec fields into the existing on-disk YAML.
+
+        Unlike save_recipe (which writes the spec verbatim), this preserves any
+        unmodeled fields already in the YAML — e.g. upstream `defaults`,
+        `command`, `container`, `recipe_version`. If no file exists yet, falls
+        back to save_recipe.
+        """
+        _validate_name(spec.name)
+        f = self._recipes_dir(None) / f"{spec.name}.yaml"
+        if not f.exists():
+            self.save_recipe(spec)
+            return
+        existing = yaml.safe_load(f.read_text()) or {}
+        if not isinstance(existing, dict):
+            raise ValidationError(
+                f"existing recipe {spec.name!r} is not a YAML mapping; "
+                "edit via the YAML view"
+            )
+        existing.update(spec.model_dump())
+        f.write_text(yaml.safe_dump(existing, sort_keys=False))
+
     def save_recipe_raw(self, name: str, yaml_text: str) -> RecipeSpec:
         """Persist YAML verbatim (for upstream-format recipes) and return a parsed view.
 
