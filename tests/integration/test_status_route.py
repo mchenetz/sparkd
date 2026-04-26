@@ -36,9 +36,9 @@ async def test_status_lists_running_external_container(env):
         stdout='{"ID":"abcdef123456","Image":"vllm","Labels":"","State":"running"}\n',
     )
     bid = (
-        await client.post("/boxes", json={"name": "b", "host": "h", "user": "u"})
+        await client.post("/api/boxes", json={"name": "b", "host": "h", "user": "u"})
     ).json()["id"]
-    r = await client.get(f"/boxes/{bid}/status")
+    r = await client.get(f"/api/boxes/{bid}/status")
     assert r.status_code == 200
     body = r.json()
     assert body["connectivity"] == "online"
@@ -51,9 +51,9 @@ async def test_status_offline_when_docker_fails(env):
         "docker ps --format '{{json .}}'", stderr="boom", exit=1
     )
     bid = (
-        await client.post("/boxes", json={"name": "b", "host": "h", "user": "u"})
+        await client.post("/api/boxes", json={"name": "b", "host": "h", "user": "u"})
     ).json()["id"]
-    r = await client.get(f"/boxes/{bid}/status")
+    r = await client.get(f"/api/boxes/{bid}/status")
     assert r.status_code == 200
     # Docker exited 1 but produced no JSON, so reconcile sees no containers + healthy=False;
     # connectivity reads as "online" because the SSH command itself succeeded.

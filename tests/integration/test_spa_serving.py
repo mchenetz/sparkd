@@ -25,6 +25,6 @@ async def test_spa_root_serves_index_when_built(client):
 
 
 async def test_api_routes_still_work_alongside_spa(client):
-    r = await client.get("/healthz")
+    r = await client.get("/api/healthz")
     assert r.status_code == 200
     assert r.json()["db"] == "ok"

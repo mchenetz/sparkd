@@ -25,8 +25,8 @@ async def client(sparkd_home, monkeypatch):
 
 async def test_setup_persists_key_and_status_reports_configured(client):
     c, store = client
-    r = await c.post("/advisor/setup", json={"anthropic_api_key": "sk-test"})
+    r = await c.post("/api/advisor/setup", json={"anthropic_api_key": "sk-test"})
     assert r.status_code == 200
     assert store[("sparkd", "anthropic_api_key")] == "sk-test"
-    r = await c.get("/advisor/status")
+    r = await c.get("/api/advisor/status")
     assert r.json()["configured"] is True

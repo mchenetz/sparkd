@@ -41,11 +41,11 @@ async def test_sync_upstream_imports_then_appears_in_list(client):
             200, text="name: alpha\nmodel: org/alpha\ndefaults:\n  tensor_parallel: 1\n"
         )
     )
-    r = await client.post("/recipes/sync-upstream", json={})
+    r = await client.post("/api/recipes/sync-upstream", json={})
     assert r.status_code == 200
     body = r.json()
     assert body["imported"] == ["alpha"]
-    listing = (await client.get("/recipes")).json()
+    listing = (await client.get("/api/recipes")).json()
     assert any(r["name"] == "alpha" for r in listing)
 
 
@@ -55,7 +55,7 @@ async def test_sync_upstream_404_returns_502(client):
         "https://api.github.com/repos/nope/nope/contents/recipes"
     ).mock(return_value=httpx.Response(404, json={}))
     r = await client.post(
-        "/recipes/sync-upstream",
+        "/api/recipes/sync-upstream",
         json={"repo": "nope/nope", "branch": "main"},
     )
     assert r.status_code == 502

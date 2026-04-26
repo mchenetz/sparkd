@@ -36,13 +36,13 @@ async def client(sparkd_home, monkeypatch):
 
 async def test_discover_returns_job_id_then_results(client):
     r = await client.post(
-        "/boxes/discover",
+        "/api/boxes/discover",
         json={"cidr": "127.0.0.0/30", "ssh_user": "ubuntu"},
     )
     assert r.status_code == 202
     job_id = r.json()["job_id"]
     for _ in range(50):
-        j = (await client.get(f"/jobs/{job_id}")).json()
+        j = (await client.get(f"/api/jobs/{job_id}")).json()
         if j["state"] in {"succeeded", "failed"}:
             break
         await asyncio.sleep(0.02)

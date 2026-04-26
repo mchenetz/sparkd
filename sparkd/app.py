@@ -92,17 +92,21 @@ def build_app() -> FastAPI:
     api_key = sparkd_secrets.get_secret("anthropic_api_key") or ""
     port = AnthropicAdapter(api_key=api_key) if api_key else None
     app.state.advisor = AdvisorService(port=port)
-    app.include_router(boxes_router)
-    app.include_router(recipes_router)
-    app.include_router(launches_router)
-    app.include_router(status_router)
-    app.include_router(jobs_router)
-    app.include_router(hf_router)
-    app.include_router(mods_router)
-    app.include_router(advisor_router)
+    # All HTTP API endpoints are namespaced under /api so SPA routes like
+    # /recipes/:name don't collide with the API /api/recipes/{name}.
+    # WebSocket routes stay at /ws/... — they don't conflict with SPA routes
+    # because browsers don't navigate to ws:// URLs.
+    app.include_router(boxes_router, prefix="/api")
+    app.include_router(recipes_router, prefix="/api")
+    app.include_router(launches_router, prefix="/api")
+    app.include_router(status_router, prefix="/api")
+    app.include_router(jobs_router, prefix="/api")
+    app.include_router(hf_router, prefix="/api")
+    app.include_router(mods_router, prefix="/api")
+    app.include_router(advisor_router, prefix="/api")
     app.include_router(ws_router)
 
-    @app.get("/healthz", include_in_schema=False)
+    @app.get("/api/healthz", include_in_schema=False)
     async def healthz() -> dict:
         return {
             "db": "ok",

@@ -70,19 +70,19 @@ async def client(sparkd_home, monkeypatch):
 async def test_create_session_then_generate_recipe(client):
     c, _app = client
     bid = (
-        await c.post("/boxes", json={"name": "b", "host": "h", "user": "u"})
+        await c.post("/api/boxes", json={"name": "b", "host": "h", "user": "u"})
     ).json()["id"]
     r = await c.post(
-        "/advisor/sessions",
+        "/api/advisor/sessions",
         json={"kind": "recipe", "target_box_id": bid, "hf_model_id": "x/y"},
     )
     assert r.status_code == 201
     sid = r.json()["id"]
-    r = await c.post(f"/advisor/sessions/{sid}/recipe", json={})
+    r = await c.post(f"/api/advisor/sessions/{sid}/recipe", json={})
     assert r.status_code == 200
     body = r.json()
     assert body["draft"]["name"] == "r1"
-    r = await c.get(f"/advisor/sessions/{sid}")
+    r = await c.get(f"/api/advisor/sessions/{sid}")
     assert r.status_code == 200
     assert r.json()["input_tokens"] == 4
     assert r.json()["output_tokens"] == 8

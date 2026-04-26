@@ -32,7 +32,7 @@ async def test_get_hf_model_returns_facts(client):
             },
         )
     )
-    r = await client.get("/hf/models/x/y")
+    r = await client.get("/api/hf/models/x/y")
     assert r.status_code == 200
     body = r.json()
     assert body["architecture"] == "A"
@@ -44,6 +44,6 @@ async def test_get_hf_model_missing_returns_minimal(client):
     respx.get("https://huggingface.co/api/models/missing/x").mock(
         return_value=httpx.Response(404, json={})
     )
-    r = await client.get("/hf/models/missing/x")
+    r = await client.get("/api/hf/models/missing/x")
     assert r.status_code == 200
     assert r.json()["id"] == "missing/x"

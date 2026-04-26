@@ -16,24 +16,24 @@ async def client(sparkd_home):
 
 async def test_create_then_list_box(client):
     resp = await client.post(
-        "/boxes",
+        "/api/boxes",
         json={"name": "spark-01", "host": "10.0.0.5", "user": "ubuntu"},
     )
     assert resp.status_code == 201
     box_id = resp.json()["id"]
-    resp = await client.get("/boxes")
+    resp = await client.get("/api/boxes")
     assert resp.status_code == 200
     assert resp.json()[0]["id"] == box_id
 
 
 async def test_get_missing_returns_404_problem(client):
-    resp = await client.get("/boxes/nope")
+    resp = await client.get("/api/boxes/nope")
     assert resp.status_code == 404
     assert resp.headers["content-type"].startswith("application/problem+json")
 
 
 async def test_delete_removes_box(client):
-    r = await client.post("/boxes", json={"name": "x", "host": "h", "user": "u"})
+    r = await client.post("/api/boxes", json={"name": "x", "host": "h", "user": "u"})
     bid = r.json()["id"]
-    assert (await client.delete(f"/boxes/{bid}")).status_code == 204
-    assert (await client.get(f"/boxes/{bid}")).status_code == 404
+    assert (await client.delete(f"/api/boxes/{bid}")).status_code == 204
+    assert (await client.get(f"/api/boxes/{bid}")).status_code == 404

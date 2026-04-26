@@ -16,17 +16,17 @@ async def client(sparkd_home):
 
 async def test_create_and_list_recipe(client):
     body = {"name": "r1", "model": "m", "args": {"--tp": "1"}}
-    assert (await client.post("/recipes", json=body)).status_code == 201
-    rs = (await client.get("/recipes")).json()
+    assert (await client.post("/api/recipes", json=body)).status_code == 201
+    rs = (await client.get("/api/recipes")).json()
     assert rs[0]["name"] == "r1"
 
 
 async def test_get_missing_recipe_404(client):
-    r = await client.get("/recipes/nope")
+    r = await client.get("/api/recipes/nope")
     assert r.status_code == 404
 
 
 async def test_delete_recipe(client):
-    await client.post("/recipes", json={"name": "r1", "model": "m"})
-    assert (await client.delete("/recipes/r1")).status_code == 204
-    assert (await client.get("/recipes/r1")).status_code == 404
+    await client.post("/api/recipes", json={"name": "r1", "model": "m"})
+    assert (await client.delete("/api/recipes/r1")).status_code == 204
+    assert (await client.get("/api/recipes/r1")).status_code == 404

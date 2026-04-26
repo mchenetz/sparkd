@@ -24,22 +24,22 @@ async def test_create_list_get_delete_mod(client):
         "files": {"patch.diff": "--- a\n+++ b\n"},
         "enabled": True,
     }
-    r = await client.post("/mods", json=body)
+    r = await client.post("/api/mods", json=body)
     assert r.status_code == 201
-    r = await client.get("/mods")
+    r = await client.get("/api/mods")
     assert r.status_code == 200
     assert any(m["name"] == "patch-a" for m in r.json())
-    r = await client.get("/mods/patch-a")
+    r = await client.get("/api/mods/patch-a")
     assert r.status_code == 200
     assert r.json()["files"]["patch.diff"].startswith("--- a")
-    r = await client.delete("/mods/patch-a")
+    r = await client.delete("/api/mods/patch-a")
     assert r.status_code == 204
-    assert (await client.get("/mods/patch-a")).status_code == 404
+    assert (await client.get("/api/mods/patch-a")).status_code == 404
 
 
 async def test_create_mod_invalid_name_returns_422(client):
     r = await client.post(
-        "/mods",
+        "/api/mods",
         json={"name": "../evil", "target_models": [], "files": {}},
     )
     assert r.status_code == 422

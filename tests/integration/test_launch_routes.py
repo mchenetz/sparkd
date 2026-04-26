@@ -41,9 +41,9 @@ async def env(sparkd_home, fake_box, monkeypatch):
 async def test_launch_creates_record(env):
     client, _app, _box = env
     bid = (
-        await client.post("/boxes", json={"name": "b", "host": "h", "user": "u"})
+        await client.post("/api/boxes", json={"name": "b", "host": "h", "user": "u"})
     ).json()["id"]
-    await client.post("/recipes", json={"name": "r1", "model": "m"})
-    r = await client.post("/launches", json={"recipe": "r1", "box_id": bid})
+    await client.post("/api/recipes", json={"name": "r1", "model": "m"})
+    r = await client.post("/api/launches", json={"recipe": "r1", "box_id": bid})
     assert r.status_code == 201
     assert r.json()["state"] == "starting"

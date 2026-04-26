@@ -16,7 +16,7 @@ async def client(sparkd_home):
 
 
 async def test_healthz_reports_components(client):
-    r = await client.get("/healthz")
+    r = await client.get("/api/healthz")
     assert r.status_code == 200
     body = r.json()
     assert body["db"] == "ok"

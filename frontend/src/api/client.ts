@@ -9,7 +9,10 @@ export class ApiError extends Error {
 }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const r = await fetch(path, {
+  // All HTTP endpoints live under /api on the backend; SPA owns the rest of
+  // the URL space so /recipes/:name doesn't collide with the API.
+  const fullPath = path.startsWith("/api") ? path : `/api${path}`;
+  const r = await fetch(fullPath, {
     method,
     headers: body ? { "content-type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,

@@ -89,11 +89,11 @@ async def test_full_recipe_flow(client):
         )
     )
     box_id = (
-        await c.post("/boxes", json={"name": "b", "host": "h", "user": "u"})
+        await c.post("/api/boxes", json={"name": "b", "host": "h", "user": "u"})
     ).json()["id"]
     sid = (
         await c.post(
-            "/advisor/sessions",
+            "/api/advisor/sessions",
             json={
                 "kind": "recipe",
                 "target_box_id": box_id,
@@ -101,12 +101,12 @@ async def test_full_recipe_flow(client):
             },
         )
     ).json()["id"]
-    r = await c.post(f"/advisor/sessions/{sid}/recipe", json={})
+    r = await c.post(f"/api/advisor/sessions/{sid}/recipe", json={})
     assert r.status_code == 200
     draft = r.json()["draft"]
     assert draft["name"] == "llama-8b"
     r = await c.post(
-        "/recipes",
+        "/api/recipes",
         json={
             "name": draft["name"],
             "model": draft["model"],
@@ -116,7 +116,7 @@ async def test_full_recipe_flow(client):
         },
     )
     assert r.status_code == 201
-    r = await c.get(f"/advisor/sessions/{sid}")
+    r = await c.get(f"/api/advisor/sessions/{sid}")
     assert r.json()["input_tokens"] == 10
     assert r.json()["output_tokens"] == 20
 
@@ -125,19 +125,19 @@ async def test_full_mod_flow(client):
     c, _app = client
     sid = (
         await c.post(
-            "/advisor/sessions",
+            "/api/advisor/sessions",
             json={"kind": "mod", "hf_model_id": "meta-llama/x"},
         )
     ).json()["id"]
     r = await c.post(
-        f"/advisor/sessions/{sid}/mod",
+        f"/api/advisor/sessions/{sid}/mod",
         json={"error_log": "ImportError: foo"},
     )
     assert r.status_code == 200
     draft = r.json()["draft"]
     assert draft["name"] == "fix-vocab"
     r = await c.post(
-        "/mods",
+        "/api/mods",
         json={
             "name": draft["name"],
             "target_models": draft["target_models"],
@@ -147,5 +147,5 @@ async def test_full_mod_flow(client):
         },
     )
     assert r.status_code == 201
-    r = await c.get("/mods")
+    r = await c.get("/api/mods")
     assert any(m["name"] == "fix-vocab" for m in r.json())
