@@ -51,3 +51,27 @@ def test_delete_mod(svc):
     svc.delete("a")
     with pytest.raises(NotFoundError):
         svc.load("a")
+
+
+def test_save_removes_files_not_in_new_spec(svc):
+    """Editing via the UI should be able to remove files."""
+    svc.save(ModSpec(name="m", target_models=[], files={"a.sh": "A", "b.sh": "B"}))
+    svc.save(ModSpec(name="m", target_models=[], files={"a.sh": "A only"}))
+    got = svc.load("m")
+    assert "b.sh" not in got.files
+    assert got.files == {"a.sh": "A only"}
+
+
+def test_save_prunes_empty_subdirs(svc):
+    """When a file under a subdirectory is removed and the subdir empties,
+    the subdir is cleaned up so it doesn't show as a phantom file path."""
+    svc.save(
+        ModSpec(
+            name="m",
+            target_models=[],
+            files={"sub/x.txt": "X", "top.txt": "T"},
+        )
+    )
+    svc.save(ModSpec(name="m", target_models=[], files={"top.txt": "T"}))
+    got = svc.load("m")
+    assert got.files == {"top.txt": "T"}

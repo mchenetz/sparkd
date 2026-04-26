@@ -36,6 +36,20 @@ class ModService:
             _check_filename(f)
         d = self._dir(spec.name)
         d.mkdir(parents=True, exist_ok=True)
+        # Remove on-disk files that aren't in the new spec.files — keeps the
+        # mod directory in sync with what the user just submitted (so e.g. a
+        # file removed in the UI actually disappears from disk).
+        keep = set(spec.files.keys())
+        for p in list(d.rglob("*")):
+            if not p.is_file() or p.name == "mod.yaml":
+                continue
+            rel = str(p.relative_to(d))
+            if rel not in keep:
+                p.unlink()
+        # Prune empty subdirectories left behind by deletions.
+        for p in sorted(d.rglob("*"), reverse=True):
+            if p.is_dir() and not any(p.iterdir()):
+                p.rmdir()
         meta = {
             "name": spec.name,
             "target_models": spec.target_models,

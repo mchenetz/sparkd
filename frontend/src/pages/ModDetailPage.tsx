@@ -4,8 +4,8 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Card, EmptyState, Pill } from "../components/Card";
 import CodeEditor from "../components/CodeEditor";
-import KeyValueEditor from "../components/KeyValueEditor";
 import PageHeader from "../components/PageHeader";
+import StringListEditor from "../components/StringListEditor";
 import Tabs from "../components/Tabs";
 import { Mod, useDeleteMod, useMod, useSaveMod, useUpdateMod } from "../hooks/useMods";
 import { useRecipes } from "../hooks/useRecipes";
@@ -59,12 +59,6 @@ export default function ModDetailPage() {
   const setField = <K extends keyof Mod>(k: K, v: Mod[K]) => {
     setDraft((d) => ({ ...d, [k]: v }));
   };
-
-  const targetMap = useMemo(() => {
-    const out: Record<string, string> = {};
-    draft.target_models.forEach((t, i) => (out[String(i)] = t));
-    return out;
-  }, [draft.target_models]);
 
   const onSave = async () => {
     if (!draft.name) return;
@@ -162,15 +156,11 @@ export default function ModDetailPage() {
                   />
                 </Field>
                 <Field label="targets" hint="hf model ids this mod applies to">
-                  <KeyValueEditor
-                    value={targetMap}
-                    onChange={(map) => {
-                      const list = Object.values(map).filter(Boolean);
-                      setField("target_models", list);
-                    }}
-                    keyPlaceholder="(index)"
-                    valuePlaceholder="org/model"
-                    monoKey
+                  <StringListEditor
+                    value={draft.target_models}
+                    onChange={(v) => setField("target_models", v)}
+                    placeholder="org/model"
+                    mono
                   />
                 </Field>
                 <Field label="enabled">
