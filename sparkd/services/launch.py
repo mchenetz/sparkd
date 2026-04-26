@@ -5,6 +5,7 @@ import shlex
 import uuid
 from datetime import datetime, timezone
 
+import yaml
 from sqlalchemy import select
 
 from sparkd.db.engine import session_scope
@@ -61,6 +62,17 @@ class LaunchService:
                 "recipe failed pre-flight validation",
                 details={"issues": issues},
             )
+        # Capture the upstream-format `container:` field too — RecipeSpec
+        # doesn't carry it, but we need it later to find the running docker
+        # container by image (ancestor) for pause/restart/inspect/stop.
+        try:
+            raw_yaml = self.library.load_recipe_text(
+                body.recipe, box_id=body.box_id
+            )
+            raw_recipe = yaml.safe_load(raw_yaml) or {}
+        except Exception:  # noqa: BLE001
+            raw_recipe = {}
+        container_image = (raw_recipe.get("container") or "vllm-node").strip()
         await self._sync_files(body.recipe, body.box_id, body.mods)
         launch_id = uuid.uuid4().hex[:12]
         log_path = f"~/.sparkd-launches/{launch_id}.log"
@@ -91,12 +103,14 @@ class LaunchService:
             raise ConflictError(
                 f"failed to start: {result.stderr.strip()}"
             )
+        snapshot = recipe.model_dump()
+        snapshot["container"] = container_image
         async with session_scope() as s:
             row = Launch(
                 id=launch_id,
                 box_id=body.box_id,
                 recipe_name=body.recipe,
-                recipe_snapshot_json=recipe.model_dump(),
+                recipe_snapshot_json=snapshot,
                 mods_json=body.mods,
                 state=LaunchState.starting.value,
                 log_path=log_path,
@@ -143,10 +157,13 @@ class LaunchService:
     async def _discover_container(
         self, target: SSHTarget, row: Launch
     ) -> str | None:
-        """Best-effort: find the docker container started by ./run-recipe.sh
-        for this launch. We can't tag the container (the upstream script
-        doesn't accept extra docker args), so heuristics: match the recipe's
-        container image AND the model name appearing in the command line.
+        """Best-effort: find the running docker container started by
+        ./run-recipe.sh for this launch. The upstream script doesn't accept
+        extra `docker run` args so we can't tag the container; fall back to:
+          1. filter `docker ps` by ancestor image (recipe's container: field)
+             and status=running
+          2. if multiple match, prefer one whose command contains the model
+             id; otherwise take the most recent (docker ps lists newest first).
         """
         snap = row.recipe_snapshot_json or {}
         image = (snap.get("container") or "vllm-node").strip()
@@ -155,23 +172,39 @@ class LaunchService:
             return None
         out = await self.pool.run(
             target,
-            "docker ps --no-trunc --format '{{.ID}}|{{.Image}}|{{.Command}}' "
-            f"--filter ancestor={shlex.quote(image)}",
+            f"docker ps --no-trunc --filter ancestor={shlex.quote(image)} "
+            f"--filter status=running --format '{{{{.ID}}}}|{{{{.Command}}}}'",
         )
-        for line in out.stdout.strip().splitlines():
-            parts = line.split("|", 2)
-            if len(parts) != 3:
-                continue
-            cid, _img, cmdline = parts
-            if not model or model in cmdline:
-                return cid.strip()
-        return None
+        rows = [
+            line.split("|", 1)
+            for line in out.stdout.strip().splitlines()
+            if line.strip()
+        ]
+        if not rows:
+            return None
+        if model:
+            for r in rows:
+                if len(r) == 2 and model in r[1]:
+                    return r[0].strip()
+        return rows[0][0].strip()
+
+    async def _container_running(self, target: SSHTarget, cid: str) -> bool:
+        check = await self.pool.run(
+            target,
+            f"docker ps -q --filter id={shlex.quote(cid)} "
+            f"--filter status=running",
+        )
+        return bool(check.stdout.strip())
 
     async def _resolve_container(
         self, launch_id: str
     ) -> tuple[SSHTarget, Launch, str | None]:
         target, row = await self._target_and_row(launch_id)
         cid: str | None = row.container_id
+        # Cached id might be stale (build/intermediate container that's gone,
+        # or a container we stopped earlier). Verify it's still running.
+        if cid and not await self._container_running(target, cid):
+            cid = None
         if not cid:
             cid = await self._discover_container(target, row)
             if cid:

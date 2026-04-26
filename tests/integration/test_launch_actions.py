@@ -51,21 +51,63 @@ async def _start_launch(ls, box_svc, lib, *, model="qwen/x"):
     return await ls.launch(LaunchCreate(recipe="r1", box_id=bs.id))
 
 
-async def test_pause_finds_container_by_image_and_model(env):
+async def test_pause_picks_model_match_when_multiple_candidates(env):
+    """Image filter alone catches multiple containers; model substring picks."""
     ls, box_svc, lib, fake, _ = env
     rec = await _start_launch(ls, box_svc, lib, model="org/model-x")
     fake.reply(
-        "docker ps --no-trunc --format '{{.ID}}|{{.Image}}|{{.Command}}' "
-        "--filter ancestor=vllm-node",
+        "docker ps --no-trunc --filter ancestor=vllm-node "
+        "--filter status=running --format '{{.ID}}|{{.Command}}'",
         stdout=(
-            "ABC123|vllm-node|vllm serve org/other-model --tp 1\n"
-            "DEF456|vllm-node|vllm serve org/model-x --tp 2\n"
+            "ABC123|python -m vllm.entrypoints.openai.api_server\n"
+            "DEF456|vllm serve org/model-x --tp 2\n"
         ),
     )
     fake.reply("docker pause DEF456", stdout="DEF456\n")
     after = await ls.pause(rec.id)
     assert after.state == LaunchState.paused
     assert after.container_id == "DEF456"
+
+
+async def test_pause_falls_back_to_first_when_model_not_in_command(env):
+    """Real-world case: vLLM runs as `python -m vllm.entrypoints...` and the
+    model id doesn't appear literally in the docker Command field. We should
+    still pick the (only) running container with the right image."""
+    ls, box_svc, lib, fake, _ = env
+    rec = await _start_launch(ls, box_svc, lib, model="org/model-x")
+    fake.reply(
+        "docker ps --no-trunc --filter ancestor=vllm-node "
+        "--filter status=running --format '{{.ID}}|{{.Command}}'",
+        stdout="F7B999F2D8A5|python -m vllm.entrypoints.openai.api_server\n",
+    )
+    fake.reply("docker pause F7B999F2D8A5", stdout="F7B999F2D8A5\n")
+    after = await ls.pause(rec.id)
+    assert after.container_id == "F7B999F2D8A5"
+
+
+async def test_resolve_re_discovers_when_cached_id_is_stale(env):
+    """The cached container id might be from a build/intermediate container
+    that no longer exists. We must verify it's still running and re-discover."""
+    ls, box_svc, lib, fake, _ = env
+    rec = await _start_launch(ls, box_svc, lib, model="org/x")
+    from sparkd.db.engine import session_scope
+    from sparkd.db.models import Launch
+
+    async with session_scope() as s:
+        row = await s.get(Launch, rec.id)
+        row.container_id = "STALEID"
+    # cached id check returns empty → not running anymore
+    fake.reply(
+        "docker ps -q --filter id=STALEID --filter status=running", stdout=""
+    )
+    fake.reply(
+        "docker ps --no-trunc --filter ancestor=vllm-node "
+        "--filter status=running --format '{{.ID}}|{{.Command}}'",
+        stdout="LIVEID|python -m vllm\n",
+    )
+    fake.reply("docker pause LIVEID", stdout="LIVEID\n")
+    after = await ls.pause(rec.id)
+    assert after.container_id == "LIVEID"
 
 
 async def test_unpause_returns_to_healthy(env):
