@@ -8,6 +8,7 @@ import KeyValueEditor from "../components/KeyValueEditor";
 import ModPicker from "../components/ModPicker";
 import PageHeader from "../components/PageHeader";
 import RecipeAIAssist from "../components/RecipeAIAssist";
+import RecipeDiffView from "../components/RecipeDiffView";
 import Tabs from "../components/Tabs";
 import {
   Recipe,
@@ -40,10 +41,13 @@ export default function RecipeDetailPage() {
   const updateRaw = useUpdateRecipeRaw();
   const del = useDeleteRecipe();
 
-  const [tab, setTab] = useState<"form" | "yaml">("form");
+  const [tab, setTab] = useState<"form" | "yaml" | "diff">("form");
   const [draft, setDraft] = useState<Recipe>(EMPTY);
   const [yamlDraft, setYamlDraft] = useState<string>("");
   const [dirty, setDirty] = useState(false);
+  const [pendingDraft, setPendingDraft] = useState<
+    import("../hooks/useAdvisor").RecipeDraft | null
+  >(null);
 
   useEffect(() => {
     if (isNew) {
@@ -138,10 +142,40 @@ export default function RecipeDetailPage() {
         <div>
           <Tabs
             active={tab}
-            onChange={(id) => setTab(id as "form" | "yaml")}
+            onChange={(id) => setTab(id as "form" | "yaml" | "diff")}
             tabs={[
               { id: "form", label: "Form" },
               { id: "yaml", label: "YAML" },
+              ...(pendingDraft
+                ? [
+                    {
+                      id: "diff",
+                      label: (
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6,
+                            color: "var(--accent-ai)",
+                          }}
+                        >
+                          Diff
+                          <span
+                            style={{
+                              padding: "1px 6px",
+                              borderRadius: 999,
+                              background: "rgba(255,119,51,0.18)",
+                              fontSize: 10,
+                              fontFamily: "var(--font-mono)",
+                            }}
+                          >
+                            AI
+                          </span>
+                        </span>
+                      ),
+                    },
+                  ]
+                : []),
             ]}
           />
 
@@ -297,14 +331,37 @@ export default function RecipeDetailPage() {
               )}
             </Card>
           )}
+
+          {tab === "diff" && pendingDraft && (
+            <RecipeDiffView
+              base={draft}
+              proposed={pendingDraft}
+              onApply={() => {
+                setDraft((d) => ({
+                  ...d,
+                  model: pendingDraft.model || d.model,
+                  description: pendingDraft.description ?? d.description,
+                  args: pendingDraft.args ?? {},
+                  env: pendingDraft.env ?? {},
+                }));
+                setDirty(true);
+                setPendingDraft(null);
+                setTab("form");
+              }}
+              onDiscard={() => {
+                setPendingDraft(null);
+                setTab("form");
+              }}
+            />
+          )}
         </div>
 
         <aside style={{ display: "grid", gap: 16, alignContent: "start" }}>
           <RecipeAIAssist
             recipe={draft}
-            onApply={(next) => {
-              setDraft(next);
-              setDirty(true);
+            onPendingDraft={(d) => {
+              setPendingDraft(d);
+              if (d) setTab("diff");
             }}
           />
           {!isNew && (

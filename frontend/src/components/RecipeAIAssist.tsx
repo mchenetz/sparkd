@@ -3,31 +3,21 @@ import { useState } from "react";
 
 import {
   RecipeDraft,
+  useAdvisorStatus,
   useCreateAdvisorSession,
   useGenerateRecipe,
   useOptimizeRecipe,
 } from "../hooks/useAdvisor";
-import { useAdvisorStatus } from "../hooks/useAdvisor";
 import { Recipe, useUpdateRecipe } from "../hooks/useRecipes";
 import AdvisorChat from "./AdvisorChat";
 import { Card, Pill } from "./Card";
 
-function applyDraftToRecipe(draft: RecipeDraft, current: Recipe): Recipe {
-  return {
-    ...current,
-    model: draft.model || current.model,
-    description: draft.description || current.description || "",
-    args: draft.args ?? {},
-    env: draft.env ?? {},
-  };
-}
-
 export default function RecipeAIAssist({
   recipe,
-  onApply,
+  onPendingDraft,
 }: {
   recipe: Recipe;
-  onApply: (next: Recipe) => void;
+  onPendingDraft: (draft: RecipeDraft | null) => void;
 }) {
   const status = useAdvisorStatus();
   const update = useUpdateRecipe();
@@ -96,8 +86,7 @@ export default function RecipeAIAssist({
               const out = await gen.mutateAsync(r.id);
               setText(out.text);
               if (out.draft) {
-                const next = applyDraftToRecipe(out.draft, recipe);
-                onApply(next);
+                onPendingDraft(out.draft);
               }
             }}
           >
@@ -149,8 +138,7 @@ export default function RecipeAIAssist({
               });
               setText(out.text);
               if (out.draft) {
-                const next = applyDraftToRecipe(out.draft, recipe);
-                onApply(next);
+                onPendingDraft(out.draft);
               }
             }}
           >

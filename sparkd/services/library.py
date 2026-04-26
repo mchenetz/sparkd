@@ -30,13 +30,13 @@ class LibraryService:
         _validate_name(spec.name)
         d = self._recipes_dir(None)
         d.mkdir(parents=True, exist_ok=True)
-        (d / f"{spec.name}.yaml").write_text(yaml.safe_dump(spec.model_dump(), sort_keys=False))
+        (d / f"{spec.name}.yaml").write_text(_render_upstream_yaml(spec))
 
     def save_recipe_override(self, box_id: str, spec: RecipeSpec) -> None:
         _validate_name(spec.name)
         d = self._recipes_dir(box_id)
         d.mkdir(parents=True, exist_ok=True)
-        (d / f"{spec.name}.yaml").write_text(yaml.safe_dump(spec.model_dump(), sort_keys=False))
+        (d / f"{spec.name}.yaml").write_text(_render_upstream_yaml(spec))
 
     def load_recipe(self, name: str, *, box_id: str | None = None) -> RecipeSpec:
         _validate_name(name)
@@ -148,3 +148,86 @@ class LibraryService:
         if not canonical.exists():
             raise NotFoundError("recipe", name)
         return canonical.read_text()
+
+
+def _yaml_inline(value: object) -> str:
+    """Compact yaml.safe_dump output suitable for inline values.
+
+    Strips trailing newline and the `...` document-end marker that yaml emits
+    for plain scalars in flow style (e.g. dump('bar') → 'bar\\n...\\n').
+    """
+    out = yaml.safe_dump(
+        value, default_flow_style=True, sort_keys=False, width=10_000
+    )
+    out = out.rstrip("\n")
+    if out.endswith("\n..."):
+        out = out[: -len("\n...")]
+    return out
+
+
+def _block_dict(name: str, d: dict) -> str:
+    """`name: {}` if empty, else `name:\\n  k: v\\n  ...`."""
+    if not d:
+        return f"{name}: {{}}"
+    body = "\n".join(f"  {k}: {_yaml_inline(v)}" for k, v in d.items())
+    return f"{name}:\n{body}"
+
+
+def _block_list(name: str, items: list) -> str:
+    if not items:
+        return f"{name}: []"
+    body = "\n".join(f"  - {_yaml_inline(item)}" for item in items)
+    return f"{name}:\n{body}"
+
+
+def _render_upstream_yaml(spec: RecipeSpec) -> str:
+    """Render a RecipeSpec in the upstream eugr/spark-vllm-docker layout
+    (recipe_version / name / description / model / container / mods / args /
+    defaults / env / command). Comments + field order match the in-repo
+    examples so sparkd-saved recipes look like the synced ones.
+
+    The on-disk YAML is the source of truth — RecipeSpec fields not relevant
+    to upstream (args is sparkd-only) are still emitted so the round-trip
+    preserves them.
+    """
+    description = spec.description or f"vLLM serving {spec.model}"
+    return (
+        f'recipe_version: "1"\n'
+        f"name: {spec.name}\n"
+        f"description: {description}\n"
+        f"\n"
+        f"# HuggingFace model id served by vLLM.\n"
+        f"model: {spec.model}\n"
+        f"\n"
+        f"# Container image to use (built by ./build-and-copy.sh).\n"
+        f"container: vllm-node\n"
+        f"\n"
+        f"# Optional list of mods applied alongside this recipe.\n"
+        f"{_block_list('mods', list(spec.mods))}\n"
+        f"\n"
+        f"# sparkd-tracked CLI flags (informational; the upstream runner uses\n"
+        f"# the templated `command` below). Edit them via the Form view.\n"
+        f"{_block_dict('args', dict(spec.args))}\n"
+        f"\n"
+        f"# Default settings (referenced as {{var}} in the command template,\n"
+        f"# can be overridden at launch via CLI flags).\n"
+        f"defaults:\n"
+        f"  port: 8000\n"
+        f"  host: 0.0.0.0\n"
+        f"  tensor_parallel: 1\n"
+        f"  gpu_memory_utilization: 0.9\n"
+        f"  max_model_len: 32768\n"
+        f"\n"
+        f"# Environment variables passed into the container.\n"
+        f"{_block_dict('env', dict(spec.env))}\n"
+        f"\n"
+        f"# vLLM serve command template — {{var}} is substituted from\n"
+        f"# `defaults` (or CLI overrides) at launch time.\n"
+        f"command: |\n"
+        f"  vllm serve {{model}} \\\n"
+        f"    --host {{host}} \\\n"
+        f"    --port {{port}} \\\n"
+        f"    --gpu-memory-utilization {{gpu_memory_utilization}} \\\n"
+        f"    --max-model-len {{max_model_len}} \\\n"
+        f"    -tp {{tensor_parallel}}\n"
+    )
