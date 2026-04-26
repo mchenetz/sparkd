@@ -46,6 +46,33 @@ def test_save_rejects_traversal_in_filename(svc):
         )
 
 
+def test_save_accepts_leading_underscore_and_dot_filenames(svc):
+    """Upstream mods include files like `_triton_alloc_setup.pth` and
+    `.gitignore` — these must be accepted (they're not path-traversal)."""
+    svc.save(
+        ModSpec(
+            name="m",
+            target_models=[],
+            files={
+                "_triton_alloc_setup.pth": "x",
+                ".gitignore": "y",
+                "sub/_inner.py": "z",
+            },
+        )
+    )
+    got = svc.load("m")
+    assert "_triton_alloc_setup.pth" in got.files
+    assert ".gitignore" in got.files
+    assert "sub/_inner.py" in got.files
+
+
+def test_save_still_rejects_absolute_path(svc):
+    with pytest.raises(ValidationError):
+        svc.save(
+            ModSpec(name="m", target_models=[], files={"/etc/passwd": "x"})
+        )
+
+
 def test_delete_mod(svc):
     svc.save(ModSpec(name="a", target_models=[]))
     svc.delete("a")

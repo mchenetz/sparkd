@@ -10,7 +10,10 @@ from sparkd.errors import NotFoundError, ValidationError
 from sparkd.schemas.mod import ModSpec
 
 _NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_\-.]{0,63}$")
-_FILENAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_\-./]{0,127}$")
+# Allow leading `_` and `.` so files like `_triton_alloc_setup.pth` and
+# `.gitignore` round-trip from upstream. Path traversal is blocked separately
+# by the `..` and leading-`/` checks below.
+_FILENAME_RE = re.compile(r"^[a-zA-Z0-9_.][a-zA-Z0-9_\-./]{0,127}$")
 
 
 def _check_name(name: str) -> None:
