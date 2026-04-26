@@ -57,7 +57,8 @@ async def test_pause_picks_model_match_when_multiple_candidates(env):
     rec = await _start_launch(ls, box_svc, lib, model="org/model-x")
     fake.reply(
         "docker ps --no-trunc --filter ancestor=vllm-node "
-        "--filter status=running --format '{{.ID}}|{{.Command}}'",
+        "--filter status=running --filter status=paused "
+        "--filter status=restarting --format '{{.ID}}|{{.Command}}'",
         stdout=(
             "ABC123|python -m vllm.entrypoints.openai.api_server\n"
             "DEF456|vllm serve org/model-x --tp 2\n"
@@ -77,7 +78,8 @@ async def test_pause_falls_back_to_first_when_model_not_in_command(env):
     rec = await _start_launch(ls, box_svc, lib, model="org/model-x")
     fake.reply(
         "docker ps --no-trunc --filter ancestor=vllm-node "
-        "--filter status=running --format '{{.ID}}|{{.Command}}'",
+        "--filter status=running --filter status=paused "
+        "--filter status=restarting --format '{{.ID}}|{{.Command}}'",
         stdout="F7B999F2D8A5|python -m vllm.entrypoints.openai.api_server\n",
     )
     fake.reply("docker pause F7B999F2D8A5", stdout="F7B999F2D8A5\n")
@@ -97,12 +99,11 @@ async def test_resolve_re_discovers_when_cached_id_is_stale(env):
         row = await s.get(Launch, rec.id)
         row.container_id = "STALEID"
     # cached id check returns empty → not running anymore
-    fake.reply(
-        "docker ps -q --filter id=STALEID --filter status=running", stdout=""
-    )
+    fake.reply("docker ps -a -q --filter id=STALEID", stdout="")
     fake.reply(
         "docker ps --no-trunc --filter ancestor=vllm-node "
-        "--filter status=running --format '{{.ID}}|{{.Command}}'",
+        "--filter status=running --filter status=paused "
+        "--filter status=restarting --format '{{.ID}}|{{.Command}}'",
         stdout="LIVEID|python -m vllm\n",
     )
     fake.reply("docker pause LIVEID", stdout="LIVEID\n")
@@ -176,6 +177,27 @@ async def test_list_active_only_filters_terminal_states(env):
     active = await ls.list(active_only=True)
     assert {l.id for l in all_} == {a.id, b.id}
     assert {l.id for l in active} == {a.id}
+
+
+async def test_unpause_works_after_pause_on_paused_container(env):
+    """Regression: after a successful pause, the cached container_id must
+    remain addressable so unpause can find it. Previously the verification
+    used --filter status=running which fails for paused containers, causing
+    re-discovery to also miss it (paused excluded from the running filter)."""
+    ls, box_svc, lib, fake, _ = env
+    rec = await _start_launch(ls, box_svc, lib, model="org/x")
+    from sparkd.db.engine import session_scope
+    from sparkd.db.models import Launch
+
+    async with session_scope() as s:
+        row = await s.get(Launch, rec.id)
+        row.container_id = "C1"
+    # `docker ps -a -q --filter id=C1` returns the id (any state, incl. paused)
+    fake.reply("docker ps -a -q --filter id=C1", stdout="C1\n")
+    fake.reply("docker unpause C1", stdout="C1\n")
+    after = await ls.unpause(rec.id)
+    assert after.container_id == "C1"
+    assert after.state == LaunchState.healthy
 
 
 async def test_delete_removes_row(env):

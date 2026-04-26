@@ -157,11 +157,11 @@ class LaunchService:
     async def _discover_container(
         self, target: SSHTarget, row: Launch
     ) -> str | None:
-        """Best-effort: find the running docker container started by
-        ./run-recipe.sh for this launch. The upstream script doesn't accept
-        extra `docker run` args so we can't tag the container; fall back to:
-          1. filter `docker ps` by ancestor image (recipe's container: field)
-             and status=running
+        """Find an addressable docker container started by ./run-recipe.sh
+        for this launch. The upstream script doesn't accept extra `docker run`
+        args so we can't tag the container; fall back to:
+          1. filter `docker ps` by ancestor image (recipe's container: field).
+             Accept running, paused, and restarting — exclude exited/dead.
           2. if multiple match, prefer one whose command contains the model
              id; otherwise take the most recent (docker ps lists newest first).
         """
@@ -173,7 +173,9 @@ class LaunchService:
         out = await self.pool.run(
             target,
             f"docker ps --no-trunc --filter ancestor={shlex.quote(image)} "
-            f"--filter status=running --format '{{{{.ID}}}}|{{{{.Command}}}}'",
+            f"--filter status=running --filter status=paused "
+            f"--filter status=restarting "
+            f"--format '{{{{.ID}}}}|{{{{.Command}}}}'",
         )
         rows = [
             line.split("|", 1)
@@ -188,11 +190,14 @@ class LaunchService:
                     return r[0].strip()
         return rows[0][0].strip()
 
-    async def _container_running(self, target: SSHTarget, cid: str) -> bool:
+    async def _container_exists(self, target: SSHTarget, cid: str) -> bool:
+        """Existence check (any state). After a `docker pause`, the container
+        is in 'paused' state — addressable for unpause/restart/inspect/stop —
+        but a strict `--filter status=running` check would treat it as stale
+        and force re-discovery. Use `-a` so any state counts."""
         check = await self.pool.run(
             target,
-            f"docker ps -q --filter id={shlex.quote(cid)} "
-            f"--filter status=running",
+            f"docker ps -a -q --filter id={shlex.quote(cid)}",
         )
         return bool(check.stdout.strip())
 
@@ -201,9 +206,9 @@ class LaunchService:
     ) -> tuple[SSHTarget, Launch, str | None]:
         target, row = await self._target_and_row(launch_id)
         cid: str | None = row.container_id
-        # Cached id might be stale (build/intermediate container that's gone,
-        # or a container we stopped earlier). Verify it's still running.
-        if cid and not await self._container_running(target, cid):
+        # Cached id might be stale: an `--rm` build/intermediate container
+        # that exited and was removed, or a container we stopped+pruned.
+        if cid and not await self._container_exists(target, cid):
             cid = None
         if not cid:
             cid = await self._discover_container(target, row)
