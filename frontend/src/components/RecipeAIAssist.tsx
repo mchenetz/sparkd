@@ -14,9 +14,14 @@ import { Card, Pill } from "./Card";
 
 export default function RecipeAIAssist({
   recipe,
+  isNew = false,
   onPendingDraft,
 }: {
   recipe: Recipe;
+  /** True on /recipes/new — only then does 'fill from a HF model' make sense.
+   *  On an existing recipe, hide it (would otherwise clobber the user's work)
+   *  and show only 'optimize current recipe'. */
+  isNew?: boolean;
   onPendingDraft: (draft: RecipeDraft | null) => void;
 }) {
   const status = useAdvisorStatus();
@@ -53,49 +58,51 @@ export default function RecipeAIAssist({
         <Pill tone="ai">claude</Pill>
       </div>
 
-      <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
-        <div
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: 11,
-            color: "var(--fg-muted)",
-            letterSpacing: "0.12em",
-            textTransform: "uppercase",
-          }}
-        >
-          fill from a hugging face model
-        </div>
-        <div style={{ display: "flex", gap: 6 }}>
-          <input
-            className="mono"
-            value={hfId}
-            onChange={(e) => setHfId(e.target.value)}
-            placeholder="meta-llama/Llama-3.1-8B-Instruct"
-            style={{ flex: 1 }}
-          />
-          <button
-            className="ai"
-            disabled={!hfId || busy}
-            onClick={async () => {
-              setText("");
-              const r = await create.mutateAsync({
-                kind: "recipe",
-                target_box_id: null,
-                hf_model_id: hfId,
-              });
-              const out = await gen.mutateAsync(r.id);
-              setText(out.text);
-              if (out.draft) {
-                onPendingDraft(out.draft);
-              }
+      {isNew && (
+        <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+          <div
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              color: "var(--fg-muted)",
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
             }}
           >
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <Wand2 size={13} /> fill
-            </span>
-          </button>
+            fill from a hugging face model
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              className="mono"
+              value={hfId}
+              onChange={(e) => setHfId(e.target.value)}
+              placeholder="meta-llama/Llama-3.1-8B-Instruct"
+              style={{ flex: 1 }}
+            />
+            <button
+              className="ai"
+              disabled={!hfId || busy}
+              onClick={async () => {
+                setText("");
+                const r = await create.mutateAsync({
+                  kind: "recipe",
+                  target_box_id: null,
+                  hf_model_id: hfId,
+                });
+                const out = await gen.mutateAsync(r.id);
+                setText(out.text);
+                if (out.draft) {
+                  onPendingDraft(out.draft);
+                }
+              }}
+            >
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <Wand2 size={13} /> fill
+              </span>
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
         <div
@@ -107,7 +114,7 @@ export default function RecipeAIAssist({
             textTransform: "uppercase",
           }}
         >
-          optimize current recipe
+          {isNew ? "optimize current recipe" : "tune this recipe"}
         </div>
         <div style={{ display: "flex", gap: 6 }}>
           <input

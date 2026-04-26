@@ -374,6 +374,7 @@ export default function RecipeDetailPage() {
         <aside style={{ display: "grid", gap: 16, alignContent: "start" }}>
           <RecipeAIAssist
             recipe={draft}
+            isNew={isNew}
             onPendingDraft={(d) => {
               setPendingDraft(d);
               if (d) setTab("diff");
