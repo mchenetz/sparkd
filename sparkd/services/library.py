@@ -40,14 +40,20 @@ class LibraryService:
 
     def load_recipe(self, name: str, *, box_id: str | None = None) -> RecipeSpec:
         _validate_name(name)
+        # The filename stem is the canonical identifier we use everywhere
+        # (URLs, sync paths, save_recipe_raw). Override whatever `name:` the
+        # YAML's body says so the parsed view's identity matches the slug.
+        # (Pretty internal names from upstream stay verbatim on disk.)
         if box_id is not None:
             override = self._recipes_dir(box_id) / f"{name}.yaml"
             if override.exists():
-                return RecipeSpec(**yaml.safe_load(override.read_text()))
+                data = yaml.safe_load(override.read_text()) or {}
+                return RecipeSpec(**{**data, "name": name})
         canonical = self._recipes_dir(None) / f"{name}.yaml"
         if not canonical.exists():
             raise NotFoundError("recipe", name)
-        return RecipeSpec(**yaml.safe_load(canonical.read_text()))
+        data = yaml.safe_load(canonical.read_text()) or {}
+        return RecipeSpec(**{**data, "name": name})
 
     def list_recipes(self, *, box_id: str | None = None) -> list[RecipeSpec]:
         d = self._recipes_dir(None)
@@ -55,12 +61,14 @@ class LibraryService:
             return []
         out: dict[str, RecipeSpec] = {}
         for p in sorted(d.glob("*.yaml")):
-            out[p.stem] = RecipeSpec(**yaml.safe_load(p.read_text()))
+            data = yaml.safe_load(p.read_text()) or {}
+            out[p.stem] = RecipeSpec(**{**data, "name": p.stem})
         if box_id:
             override_d = self._recipes_dir(box_id)
             if override_d.exists():
                 for p in sorted(override_d.glob("*.yaml")):
-                    out[p.stem] = RecipeSpec(**yaml.safe_load(p.read_text()))
+                    data = yaml.safe_load(p.read_text()) or {}
+                    out[p.stem] = RecipeSpec(**{**data, "name": p.stem})
         return list(out.values())
 
     def delete_recipe(self, name: str) -> None:
@@ -93,7 +101,12 @@ class LibraryService:
                 f"existing recipe {spec.name!r} is not a YAML mapping; "
                 "edit via the YAML view"
             )
-        existing.update(spec.model_dump())
+        updates = spec.model_dump()
+        # The slug (filename) is the identifier; we don't write it back into
+        # the YAML body, since the on-disk `name:` may be a pretty display
+        # name we want to preserve verbatim for upstream-format recipes.
+        updates.pop("name", None)
+        existing.update(updates)
         f.write_text(yaml.safe_dump(existing, sort_keys=False))
 
     def save_recipe_raw(self, name: str, yaml_text: str) -> RecipeSpec:

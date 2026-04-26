@@ -93,6 +93,40 @@ def test_save_raw_does_not_leave_orphan_on_validation_failure(lib):
     assert not lib.has_recipe("mods-wrong")
 
 
+def test_load_and_list_use_filename_as_canonical_name(lib):
+    """The slug is the identifier across the API, even if the YAML body has
+    a different (pretty) `name:` field — common in upstream recipes."""
+    yaml_text = "name: OpenAI GPT-OSS 120B\nmodel: openai/gpt-oss-120b\n"
+    lib.save_recipe_raw("openai-gpt-oss-120b", yaml_text)
+    spec = lib.load_recipe("openai-gpt-oss-120b")
+    assert spec.name == "openai-gpt-oss-120b"
+    assert spec.model == "openai/gpt-oss-120b"
+    listed = {r.name for r in lib.list_recipes()}
+    assert "openai-gpt-oss-120b" in listed
+    # On-disk YAML preserves the pretty internal name verbatim.
+    assert "OpenAI GPT-OSS 120B" in lib.load_recipe_text("openai-gpt-oss-120b")
+
+
+def test_update_recipe_preserves_internal_yaml_name(lib):
+    """Form-based PUT shouldn't overwrite the YAML's pretty `name:` field
+    with the slug — that would erase the upstream display name on first save."""
+    from sparkd.schemas.recipe import RecipeSpec
+
+    yaml_text = "name: OpenAI GPT-OSS 120B\nmodel: org/m\nargs: {--tp: '1'}\n"
+    lib.save_recipe_raw("openai-gpt-oss-120b", yaml_text)
+    # Form save with the slug as name; user edited args.
+    lib.update_recipe(
+        RecipeSpec(
+            name="openai-gpt-oss-120b",
+            model="org/m",
+            args={"--tp": "2"},
+        )
+    )
+    text = lib.load_recipe_text("openai-gpt-oss-120b")
+    assert "OpenAI GPT-OSS 120B" in text  # pretty name preserved
+    assert "'2'" in text or "tp: 2" in text  # args got updated
+
+
 def test_load_recipe_text_prefers_override(lib):
     lib.save_recipe_raw("r1", "name: r1\nmodel: a/b\n")
     # Construct an override the same way LibraryService does.
