@@ -70,6 +70,7 @@ async def test_search_returns_summaries(client):
     assert r.status_code == 200
     body = r.json()
     assert body["count"] == 2
+    assert body["error"] is None
     assert body["results"][0]["id"] == "meta-llama/Llama-3.1-8B-Instruct"
     assert body["results"][0]["pipeline_tag"] == "text-generation"
 
@@ -81,7 +82,36 @@ async def test_search_handles_upstream_error(client):
     )
     r = await client.get("/api/hf/search?q=x")
     assert r.status_code == 200
-    assert r.json() == {"results": [], "count": 0}
+    body = r.json()
+    assert body["results"] == []
+    assert body["count"] == 0
+    assert body["error"]
+    assert "503" in body["error"]
+
+
+async def test_token_storage_endpoints(client, monkeypatch):
+    store: dict[tuple[str, str], str] = {}
+    monkeypatch.setattr(
+        "sparkd.secrets._backend_set",
+        lambda svc, k, v: store.__setitem__((svc, k), v),
+    )
+    monkeypatch.setattr(
+        "sparkd.secrets._backend_get", lambda svc, k: store.get((svc, k))
+    )
+    monkeypatch.setattr(
+        "sparkd.secrets._backend_delete",
+        lambda svc, k: store.pop((svc, k), None),
+    )
+    # initial: not configured
+    assert (await client.get("/api/hf/token")).json() == {"configured": False}
+    # save
+    r = await client.put("/api/hf/token", json={"token": "hf_xxx"})
+    assert r.status_code == 200
+    assert store[("sparkd", "hf_token")] == "hf_xxx"
+    assert (await client.get("/api/hf/token")).json() == {"configured": True}
+    # clear
+    assert (await client.delete("/api/hf/token")).status_code == 204
+    assert (await client.get("/api/hf/token")).json() == {"configured": False}
 
 
 @respx.mock

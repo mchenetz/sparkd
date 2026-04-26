@@ -29,7 +29,6 @@ const LIBRARIES: { id: string; label: string }[] = [
 ];
 
 const SORTS: { id: string; label: string }[] = [
-  { id: "trending_score", label: "trending" },
   { id: "downloads", label: "downloads" },
   { id: "likes", label: "likes" },
   { id: "lastModified", label: "recently updated" },
@@ -69,7 +68,7 @@ export default function HFBrowser({
   const [query, setQuery] = useState("");
   const [pipeline, setPipeline] = useState("text-generation");
   const [library, setLibrary] = useState("");
-  const [sort, setSort] = useState("trending_score");
+  const [sort, setSort] = useState("downloads");
   const [debounced, setDebounced] = useState(query);
 
   useEffect(() => {
@@ -86,6 +85,7 @@ export default function HFBrowser({
   });
 
   const results = search.data?.results ?? [];
+  const upstreamError = search.data?.error ?? null;
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 16 }}>
@@ -122,8 +122,26 @@ export default function HFBrowser({
           </div>
         </Card>
 
-        {results.length === 0 && !search.isLoading ? (
+        {upstreamError && (
+          <div
+            style={{
+              padding: "10px 14px",
+              background: "rgba(255,89,97,0.08)",
+              border: "1px solid rgba(255,89,97,0.3)",
+              borderRadius: "var(--radius-sm)",
+              color: "var(--signal-danger)",
+              fontFamily: "var(--font-mono)",
+              fontSize: 12,
+            }}
+          >
+            hugging face hub: {upstreamError}
+          </div>
+        )}
+
+        {results.length === 0 && !search.isLoading && !upstreamError ? (
           <EmptyState title="No models found" hint="Adjust the filters or query." />
+        ) : results.length === 0 ? (
+          <></>
         ) : (
           <div
             style={{

@@ -53,9 +53,11 @@ export function useHFSearch(params: HFSearchParams) {
   return useQuery({
     queryKey: ["hf", "search", key],
     queryFn: () =>
-      api.get<{ results: HFModelSummary[]; count: number }>(
-        `/hf/search${key ? `?${key}` : ""}`,
-      ),
+      api.get<{
+        results: HFModelSummary[];
+        count: number;
+        error: string | null;
+      }>(`/hf/search${key ? `?${key}` : ""}`),
     placeholderData: (prev) => prev,
   });
 }
