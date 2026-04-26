@@ -48,12 +48,12 @@ class LibraryService:
             override = self._recipes_dir(box_id) / f"{name}.yaml"
             if override.exists():
                 data = yaml.safe_load(override.read_text()) or {}
-                return RecipeSpec(**{**data, "name": name})
+                return RecipeSpec(**{**_maybe_inject_args(data), "name": name})
         canonical = self._recipes_dir(None) / f"{name}.yaml"
         if not canonical.exists():
             raise NotFoundError("recipe", name)
         data = yaml.safe_load(canonical.read_text()) or {}
-        return RecipeSpec(**{**data, "name": name})
+        return RecipeSpec(**{**_maybe_inject_args(data), "name": name})
 
     def list_recipes(self, *, box_id: str | None = None) -> list[RecipeSpec]:
         d = self._recipes_dir(None)
@@ -62,13 +62,15 @@ class LibraryService:
         out: dict[str, RecipeSpec] = {}
         for p in sorted(d.glob("*.yaml")):
             data = yaml.safe_load(p.read_text()) or {}
-            out[p.stem] = RecipeSpec(**{**data, "name": p.stem})
+            out[p.stem] = RecipeSpec(**{**_maybe_inject_args(data), "name": p.stem})
         if box_id:
             override_d = self._recipes_dir(box_id)
             if override_d.exists():
                 for p in sorted(override_d.glob("*.yaml")):
                     data = yaml.safe_load(p.read_text()) or {}
-                    out[p.stem] = RecipeSpec(**{**data, "name": p.stem})
+                    out[p.stem] = RecipeSpec(
+                        **{**_maybe_inject_args(data), "name": p.stem}
+                    )
         return list(out.values())
 
     def delete_recipe(self, name: str) -> None:
@@ -148,6 +150,63 @@ class LibraryService:
         if not canonical.exists():
             raise NotFoundError("recipe", name)
         return canonical.read_text()
+
+
+def _extract_args_from_command(command: str, defaults: dict | None) -> dict[str, str]:
+    """Parse an upstream-format `command:` template (the vllm serve invocation)
+    and return the CLI flags as an args dict, resolving `{var}` placeholders
+    from the recipe's `defaults:` block.
+
+    Upstream recipes carry their flags inside a templated command rather than
+    in a structured `args:` field; surface them in args at load-time so the
+    sparkd form is populated rather than empty when the user opens a synced
+    recipe.
+
+    Returns {} if the command can't be parsed (unknown shape, no `serve`).
+    """
+    if not command:
+        return {}
+    expanded = command
+    for k, v in (defaults or {}).items():
+        expanded = expanded.replace("{" + k + "}", str(v))
+    # Drop line continuations and collapse whitespace.
+    flat = expanded.replace("\\\n", " ").replace("\n", " ")
+    tokens = [t for t in flat.split() if t]
+    # Find the literal "serve" token; everything before it is interpreter
+    # boilerplate (e.g. "vllm" or "python -m vllm.entrypoints..."), the next
+    # token is the model positional, and the rest are flags.
+    try:
+        serve_idx = tokens.index("serve")
+    except ValueError:
+        return {}
+    i = serve_idx + 2  # skip 'serve' + the positional model
+    args: dict[str, str] = {}
+    while i < len(tokens):
+        t = tokens[i]
+        if t.startswith("-"):
+            if i + 1 < len(tokens) and not tokens[i + 1].startswith("-"):
+                args[t] = tokens[i + 1]
+                i += 2
+            else:
+                # boolean / flag with no value
+                args[t] = ""
+                i += 1
+        else:
+            i += 1
+    return args
+
+
+def _maybe_inject_args(data: dict) -> dict:
+    """If the YAML body has no `args:` (typical of upstream-format recipes),
+    derive args from `command:` + `defaults:` so the form view isn't empty."""
+    if data.get("args"):
+        return data
+    derived = _extract_args_from_command(
+        data.get("command", "") or "", data.get("defaults") or {}
+    )
+    if derived:
+        return {**data, "args": derived}
+    return data
 
 
 def _yaml_inline(value: object) -> str:

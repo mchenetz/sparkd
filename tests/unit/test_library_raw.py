@@ -127,6 +127,61 @@ def test_update_recipe_preserves_internal_yaml_name(lib):
     assert "'2'" in text or "tp: 2" in text  # args got updated
 
 
+def test_load_extracts_args_from_command_template(lib):
+    """Upstream recipes put flags in a templated `command:` with `{var}`
+    references resolved from `defaults:`. Surface those as `args` at load
+    time so the form isn't empty for synced recipes."""
+    yaml_text = (
+        'recipe_version: "1"\n'
+        "name: q\n"
+        "description: d\n"
+        "model: org/m\n"
+        "container: vllm-node\n"
+        "mods: []\n"
+        "defaults:\n"
+        "  port: 8000\n"
+        "  host: 0.0.0.0\n"
+        "  tensor_parallel: 2\n"
+        "  gpu_memory_utilization: 0.7\n"
+        "  max_model_len: 131072\n"
+        "env: {}\n"
+        "command: |\n"
+        "  vllm serve org/m \\\n"
+        "    --enable-auto-tool-choice \\\n"
+        "    --tool-call-parser qwen3_coder \\\n"
+        "    --gpu-memory-utilization {gpu_memory_utilization} \\\n"
+        "    --host {host} \\\n"
+        "    --port {port} \\\n"
+        "    --max-model-len {max_model_len} \\\n"
+        "    -tp {tensor_parallel}\n"
+    )
+    lib.save_recipe_raw("q", yaml_text)
+    spec = lib.load_recipe("q")
+    assert spec.args["--gpu-memory-utilization"] == "0.7"
+    assert spec.args["--port"] == "8000"
+    assert spec.args["--max-model-len"] == "131072"
+    assert spec.args["-tp"] == "2"
+    assert spec.args["--tool-call-parser"] == "qwen3_coder"
+    # Boolean / no-value flags appear with empty string value
+    assert spec.args["--enable-auto-tool-choice"] == ""
+
+
+def test_load_does_not_overwrite_existing_args(lib):
+    """If the YAML already has its own `args:` block (sparkd-native), don't
+    derive from command — respect what's there."""
+    yaml_text = (
+        "name: r\n"
+        "model: org/m\n"
+        "args:\n"
+        "  --my-flag: hello\n"
+        "command: |\n"
+        "  vllm serve org/m --port 9000\n"
+    )
+    lib.save_recipe_raw("r", yaml_text)
+    spec = lib.load_recipe("r")
+    assert spec.args == {"--my-flag": "hello"}
+
+
 def test_load_recipe_text_prefers_override(lib):
     lib.save_recipe_raw("r1", "name: r1\nmodel: a/b\n")
     # Construct an override the same way LibraryService does.
