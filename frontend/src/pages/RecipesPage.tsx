@@ -34,6 +34,7 @@ export default function RecipesPage() {
         {(data ?? []).map((r) => (
           <li key={r.name}>
             <code>{r.name}</code> — {r.model}{" "}
+            <a href={`/optimize?recipe=${encodeURIComponent(r.name)}`}>optimize</a>{" "}
             <button onClick={() => del.mutate(r.name)}>delete</button>
           </li>
         ))}
