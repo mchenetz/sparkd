@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import shlex
-
 from sparkd.db.engine import session_scope
 from sparkd.db.models import Box
 from sparkd.schemas.recipe import RecipeDiff, RecipeSpec
@@ -57,9 +55,14 @@ class RecipeService:
         async with session_scope() as s:
             row = await s.get(Box, box_id)
             target = self.boxes._target_for(row)
-        await self.pool.run(target, f"mkdir -p {shlex.quote(box.repo_path)}/recipes")
+        # Don't shlex.quote repo_path or name here:
+        # - quoting `~/spark-vllm-docker` produces `'~/...'` which suppresses
+        #   tilde expansion, dropping files into a literal `~` directory.
+        # - name is already validated by LibraryService._NAME_RE; repo_path is
+        #   user-set config (the user is the only one who can hurt themselves).
+        await self.pool.run(target, f"mkdir -p {box.repo_path}/recipes")
         cmd = (
-            f"cat > {shlex.quote(box.repo_path)}/recipes/{shlex.quote(name)}.yaml "
+            f"cat > {box.repo_path}/recipes/{name}.yaml "
             f"<<'SPARKD_EOF'\n{yaml_text}SPARKD_EOF\n"
         )
         await self.pool.run(target, cmd)
