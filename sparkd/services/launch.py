@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shlex
 import uuid
 from datetime import datetime, timezone
@@ -9,11 +10,16 @@ from sqlalchemy import select
 from sparkd.db.engine import session_scope
 from sparkd.db.models import Box, Launch
 from sparkd.errors import ConflictError, NotFoundError, ValidationError
-from sparkd.schemas.launch import LaunchCreate, LaunchRecord, LaunchState
+from sparkd.schemas.launch import (
+    ACTIVE_STATES,
+    LaunchCreate,
+    LaunchRecord,
+    LaunchState,
+)
 from sparkd.services.box import BoxService
 from sparkd.services.library import LibraryService
 from sparkd.services.recipe import RecipeService
-from sparkd.ssh.pool import SSHPool
+from sparkd.ssh.pool import SSHPool, SSHTarget
 
 
 def _to_record(row: Launch) -> LaunchRecord:
@@ -108,30 +114,167 @@ class LaunchService:
                 raise NotFoundError("launch", launch_id)
             return _to_record(row)
 
-    async def list(self, *, box_id: str | None = None) -> list[LaunchRecord]:
+    async def list(
+        self,
+        *,
+        box_id: str | None = None,
+        active_only: bool = False,
+    ) -> list[LaunchRecord]:
         async with session_scope() as s:
             stmt = select(Launch)
             if box_id:
                 stmt = stmt.where(Launch.box_id == box_id)
+            if active_only:
+                stmt = stmt.where(Launch.state.in_(list(ACTIVE_STATES)))
             rows = (await s.execute(stmt)).scalars().all()
             return [_to_record(r) for r in rows]
 
-    async def stop(self, launch_id: str) -> LaunchRecord:
+    # ---------- container action helpers ----------
+
+    async def _target_and_row(self, launch_id: str) -> tuple[SSHTarget, Launch]:
         async with session_scope() as s:
             row = await s.get(Launch, launch_id)
             if row is None:
                 raise NotFoundError("launch", launch_id)
             box_row = await s.get(Box, row.box_id)
             target = self.boxes._target_for(box_row)
-        cid_query = await self.pool.run(
-            target, f"docker ps -q --filter label=sparkd.launch={launch_id}"
+            return target, row
+
+    async def _discover_container(
+        self, target: SSHTarget, row: Launch
+    ) -> str | None:
+        """Best-effort: find the docker container started by ./run-recipe.sh
+        for this launch. We can't tag the container (the upstream script
+        doesn't accept extra docker args), so heuristics: match the recipe's
+        container image AND the model name appearing in the command line.
+        """
+        snap = row.recipe_snapshot_json or {}
+        image = (snap.get("container") or "vllm-node").strip()
+        model = (snap.get("model") or "").strip()
+        if not image:
+            return None
+        out = await self.pool.run(
+            target,
+            "docker ps --no-trunc --format '{{.ID}}|{{.Image}}|{{.Command}}' "
+            f"--filter ancestor={shlex.quote(image)}",
         )
-        cid = cid_query.stdout.strip()
-        if cid:
-            await self.pool.run(target, f"docker stop {shlex.quote(cid)}")
+        for line in out.stdout.strip().splitlines():
+            parts = line.split("|", 2)
+            if len(parts) != 3:
+                continue
+            cid, _img, cmdline = parts
+            if not model or model in cmdline:
+                return cid.strip()
+        return None
+
+    async def _resolve_container(
+        self, launch_id: str
+    ) -> tuple[SSHTarget, Launch, str | None]:
+        target, row = await self._target_and_row(launch_id)
+        cid: str | None = row.container_id
+        if not cid:
+            cid = await self._discover_container(target, row)
+            if cid:
+                async with session_scope() as s:
+                    db_row = await s.get(Launch, launch_id)
+                    db_row.container_id = cid
+        return target, row, cid
+
+    async def _set_state(
+        self,
+        launch_id: str,
+        state: LaunchState,
+        *,
+        container_id: str | None = None,
+        stopped: bool = False,
+    ) -> LaunchRecord:
         async with session_scope() as s:
             row = await s.get(Launch, launch_id)
-            row.state = LaunchState.stopped.value
-            row.container_id = cid or row.container_id
-            row.stopped_at = datetime.now(timezone.utc)
+            if row is None:
+                raise NotFoundError("launch", launch_id)
+            row.state = state.value
+            if container_id:
+                row.container_id = container_id
+            if stopped:
+                row.stopped_at = datetime.now(timezone.utc)
             return _to_record(row)
+
+    # ---------- public actions ----------
+
+    async def stop(self, launch_id: str) -> LaunchRecord:
+        target, _row, cid = await self._resolve_container(launch_id)
+        if cid:
+            await self.pool.run(target, f"docker stop {shlex.quote(cid)}")
+        return await self._set_state(
+            launch_id, LaunchState.stopped, container_id=cid, stopped=True
+        )
+
+    async def pause(self, launch_id: str) -> LaunchRecord:
+        target, _row, cid = await self._resolve_container(launch_id)
+        if not cid:
+            raise NotFoundError("container", launch_id)
+        result = await self.pool.run(target, f"docker pause {shlex.quote(cid)}")
+        if result.exit_status not in (0, None):
+            raise ConflictError(f"docker pause: {result.stderr.strip()}")
+        return await self._set_state(launch_id, LaunchState.paused, container_id=cid)
+
+    async def unpause(self, launch_id: str) -> LaunchRecord:
+        target, _row, cid = await self._resolve_container(launch_id)
+        if not cid:
+            raise NotFoundError("container", launch_id)
+        result = await self.pool.run(target, f"docker unpause {shlex.quote(cid)}")
+        if result.exit_status not in (0, None):
+            raise ConflictError(f"docker unpause: {result.stderr.strip()}")
+        return await self._set_state(
+            launch_id, LaunchState.healthy, container_id=cid
+        )
+
+    async def restart_container(self, launch_id: str) -> LaunchRecord:
+        target, _row, cid = await self._resolve_container(launch_id)
+        if not cid:
+            raise NotFoundError("container", launch_id)
+        result = await self.pool.run(target, f"docker restart {shlex.quote(cid)}")
+        if result.exit_status not in (0, None):
+            raise ConflictError(f"docker restart: {result.stderr.strip()}")
+        return await self._set_state(
+            launch_id, LaunchState.starting, container_id=cid
+        )
+
+    async def inspect(self, launch_id: str) -> dict:
+        target, _row, cid = await self._resolve_container(launch_id)
+        if not cid:
+            return {"error": "no container found", "launch_id": launch_id}
+        result = await self.pool.run(target, f"docker inspect {shlex.quote(cid)}")
+        if result.exit_status not in (0, None):
+            return {"error": result.stderr.strip(), "launch_id": launch_id}
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            return {"error": f"could not parse docker inspect output: {exc}"}
+        return {"container_id": cid, "inspect": data[0] if data else None}
+
+    async def stats(self, launch_id: str) -> dict:
+        target, _row, cid = await self._resolve_container(launch_id)
+        if not cid:
+            return {"error": "no container found"}
+        result = await self.pool.run(
+            target,
+            f"docker stats --no-stream --format '{{{{json .}}}}' {shlex.quote(cid)}",
+        )
+        if result.exit_status not in (0, None):
+            return {"error": result.stderr.strip()}
+        line = result.stdout.strip()
+        if not line:
+            return {"error": "no stats output"}
+        try:
+            return {"container_id": cid, "stats": json.loads(line)}
+        except json.JSONDecodeError:
+            return {"container_id": cid, "stats": {"raw": line}}
+
+    async def delete(self, launch_id: str) -> None:
+        """Remove the launch row entirely (UI 'forget about this' action)."""
+        async with session_scope() as s:
+            row = await s.get(Launch, launch_id)
+            if row is None:
+                raise NotFoundError("launch", launch_id)
+            await s.delete(row)

@@ -29,7 +29,7 @@ def test_recipe_spec_round_trip():
 def test_launch_state_values():
     assert LaunchState.starting.value == "starting"
     assert {s.value for s in LaunchState} == {
-        "starting", "healthy", "failed", "stopped", "interrupted"
+        "starting", "healthy", "paused", "failed", "stopped", "interrupted"
     }
 
 

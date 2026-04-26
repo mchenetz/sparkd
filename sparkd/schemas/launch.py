@@ -10,9 +10,13 @@ from pydantic import BaseModel, Field
 class LaunchState(str, Enum):
     starting = "starting"
     healthy = "healthy"
+    paused = "paused"
     failed = "failed"
     stopped = "stopped"
     interrupted = "interrupted"
+
+
+ACTIVE_STATES = frozenset({"starting", "healthy", "paused"})
 
 
 class LaunchCreate(BaseModel):
