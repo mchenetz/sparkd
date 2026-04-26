@@ -1,5 +1,5 @@
 import { Check, Copy, FilePlus2, X } from "lucide-react";
-import { useState } from "react";
+import { ReactNode, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { RecipeDraft } from "../hooks/useAdvisor";
@@ -8,13 +8,40 @@ import { Card, Pill } from "./Card";
 
 const SLUG_RE = /^[a-zA-Z0-9][a-zA-Z0-9_\-.]{0,63}$/;
 
-type Status = "same" | "changed" | "added" | "removed";
-const TONE: Record<Status, { bg: string; bar: string }> = {
-  same: { bg: "transparent", bar: "transparent" },
-  changed: { bg: "rgba(255,181,71,0.06)", bar: "var(--signal-warn)" },
-  added: { bg: "rgba(77,255,166,0.06)", bar: "var(--signal-healthy)" },
-  removed: { bg: "rgba(255,89,97,0.06)", bar: "var(--signal-danger)" },
+type Status = "same" | "changed" | "added" | "removed" | "empty";
+const TONE: Record<Status, { bg: string; bar: string; fg: string }> = {
+  same: { bg: "transparent", bar: "transparent", fg: "var(--fg-secondary)" },
+  changed: {
+    bg: "rgba(255,181,71,0.06)",
+    bar: "var(--signal-warn)",
+    fg: "var(--fg-primary)",
+  },
+  added: {
+    bg: "rgba(77,255,166,0.06)",
+    bar: "var(--signal-healthy)",
+    fg: "var(--fg-primary)",
+  },
+  removed: {
+    bg: "rgba(255,89,97,0.06)",
+    bar: "var(--signal-danger)",
+    fg: "var(--fg-faint)",
+  },
+  empty: { bg: "transparent", bar: "transparent", fg: "var(--fg-faint)" },
 };
+
+/** Build a "proposed" recipe view that never empties fields the user already
+ *  has — the AI sometimes returns blank strings/objects, and we don't want
+ *  that to look like the AI is asking to delete a description / mods set. */
+function mergeForView(base: Recipe, proposed: RecipeDraft): Recipe {
+  return {
+    name: base.name,
+    model: proposed.model || base.model,
+    description: proposed.description || base.description || "",
+    args: proposed.args ?? {},
+    env: proposed.env ?? {},
+    mods: base.mods, // mods aren't carried by the recipe-draft schema
+  };
+}
 
 export default function RecipeDiffView({
   base,
@@ -33,14 +60,7 @@ export default function RecipeDiffView({
   const [newName, setNewName] = useState(`${base.name || "recipe"}-tuned`);
   const newSlugValid = SLUG_RE.test(newName);
 
-  const proposedRecipe: Recipe = {
-    name: newName || base.name,
-    model: proposed.model || base.model,
-    description: proposed.description ?? base.description ?? "",
-    args: proposed.args ?? {},
-    env: proposed.env ?? {},
-    mods: base.mods,
-  };
+  const proposedRecipe = mergeForView(base, proposed);
 
   return (
     <Card ai>
@@ -80,7 +100,8 @@ export default function RecipeDiffView({
             disabled={save.isPending}
           >
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <FilePlus2 size={13} /> {creatingNew ? "cancel new" : "create new recipe"}
+              <FilePlus2 size={13} />{" "}
+              {creatingNew ? "cancel new" : "create new recipe"}
             </span>
           </button>
         </div>
@@ -111,14 +132,18 @@ export default function RecipeDiffView({
           >
             new recipe name
           </span>
-          <div style={{ display: "flex", alignItems: "stretch", gap: 0 }}>
+          <div style={{ display: "flex", alignItems: "stretch" }}>
             <input
               autoFocus
               className="mono"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               placeholder="my-recipe-tuned"
-              style={{ flex: 1, borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+              style={{
+                flex: 1,
+                borderTopRightRadius: 0,
+                borderBottomRightRadius: 0,
+              }}
             />
             <span
               style={{
@@ -138,7 +163,7 @@ export default function RecipeDiffView({
               .yaml
             </span>
           </div>
-          {!newSlugValid && newName && (
+          {!newSlugValid && newName ? (
             <span
               style={{
                 color: "var(--signal-danger)",
@@ -148,8 +173,9 @@ export default function RecipeDiffView({
             >
               alphanumeric · _ - .  (no spaces)
             </span>
+          ) : (
+            <span />
           )}
-          {newSlugValid && <span />}
           <button
             className="primary"
             disabled={!newSlugValid || save.isPending}
@@ -172,16 +198,7 @@ export default function RecipeDiffView({
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Column title="current" subtitle={base.name} recipe={base} other={proposedRecipe} side="left" />
-        <Column
-          title="proposed"
-          subtitle={creatingNew ? newName : base.name}
-          recipe={proposedRecipe}
-          other={base}
-          side="right"
-        />
-      </div>
+      <DiffGrid base={base} proposed={proposedRecipe} proposedName={creatingNew ? newName : base.name} />
 
       {proposed.rationale && (
         <div
@@ -202,224 +219,291 @@ export default function RecipeDiffView({
   );
 }
 
-function classify(value: string, otherValue: string | undefined, side: "left" | "right"): Status {
-  if (otherValue === undefined) return side === "right" ? "added" : "removed";
-  if (value === otherValue) return "same";
+/** One unified grid so every row aligns horizontally between left/right.
+ *  Column 1 is "current" (base), column 2 is "proposed". Section headings
+ *  span both columns. */
+function DiffGrid({
+  base,
+  proposed,
+  proposedName,
+}: {
+  base: Recipe;
+  proposed: Recipe;
+  proposedName: string;
+}) {
+  const argKeys = unionKeys(base.args, proposed.args);
+  const envKeys = unionKeys(base.env, proposed.env);
+  const modsLeft = base.mods.join("\n");
+  const modsRight = proposed.mods.join("\n");
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr",
+        gap: 8,
+        background: "var(--bg-overlay)",
+        border: "1px solid var(--border-subtle)",
+        borderRadius: "var(--radius-sm)",
+        padding: 12,
+      }}
+    >
+      <Header tone="neutral" label="current" subtitle={base.name} />
+      <Header tone="ai" label="proposed" subtitle={proposedName} />
+
+      <SectionRow label="model" />
+      <ScalarCell value={base.model} status={statusOfPair(base.model, proposed.model, "left")} />
+      <ScalarCell value={proposed.model} status={statusOfPair(proposed.model, base.model, "right")} />
+
+      <SectionRow label="description" />
+      <ScalarCell
+        value={base.description || ""}
+        status={statusOfPair(base.description || "", proposed.description || "", "left")}
+        emptyHint
+      />
+      <ScalarCell
+        value={proposed.description || ""}
+        status={statusOfPair(proposed.description || "", base.description || "", "right")}
+        emptyHint
+      />
+
+      {argKeys.length > 0 && <SectionRow label="args" />}
+      {argKeys.map((k) => (
+        <DictRowPair
+          key={`args-${k}`}
+          k={k}
+          left={base.args[k]}
+          right={proposed.args[k]}
+        />
+      ))}
+
+      {envKeys.length > 0 && <SectionRow label="env" />}
+      {envKeys.map((k) => (
+        <DictRowPair
+          key={`env-${k}`}
+          k={k}
+          left={base.env[k]}
+          right={proposed.env[k]}
+        />
+      ))}
+
+      {(base.mods.length > 0 || proposed.mods.length > 0) && (
+        <SectionRow label="mods" />
+      )}
+      {(base.mods.length > 0 || proposed.mods.length > 0) && (
+        <>
+          <ListCell items={base.mods} other={proposed.mods} />
+          <ListCell items={proposed.mods} other={base.mods} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function unionKeys(
+  a: Record<string, string>,
+  b: Record<string, string>,
+): string[] {
+  return Array.from(new Set([...Object.keys(a), ...Object.keys(b)])).sort();
+}
+
+function statusOfPair(value: string, other: string, side: "left" | "right"): Status {
+  if (value === other) return "same";
+  if (!value && other) return side === "left" ? "removed" : "added";
+  if (value && !other) return side === "left" ? "added" : "removed";
   return "changed";
 }
 
-function Column({
-  title,
+function Header({
+  tone,
+  label,
   subtitle,
-  recipe,
-  other,
+}: {
+  tone: "ai" | "neutral";
+  label: string;
+  subtitle: string;
+}) {
+  return (
+    <div
+      style={{
+        padding: "8px 10px",
+        borderBottom: "1px solid var(--border-subtle)",
+        display: "flex",
+        alignItems: "baseline",
+        gap: 10,
+      }}
+    >
+      <Pill tone={tone}>{label}</Pill>
+      <code style={{ fontSize: 12, color: "var(--fg-muted)" }}>{subtitle}</code>
+    </div>
+  );
+}
+
+function SectionRow({ label }: { label: string }) {
+  return (
+    <div
+      style={{
+        gridColumn: "1 / -1",
+        padding: "10px 4px 4px",
+        fontFamily: "var(--font-mono)",
+        fontSize: 10.5,
+        color: "var(--fg-muted)",
+        letterSpacing: "0.16em",
+        textTransform: "uppercase",
+      }}
+    >
+      {label}
+    </div>
+  );
+}
+
+function ScalarCell({
+  value,
+  status,
+  emptyHint,
+}: {
+  value: string;
+  status: Status;
+  emptyHint?: boolean;
+}) {
+  const t = TONE[!value && emptyHint ? "empty" : status];
+  return (
+    <div
+      style={{
+        fontFamily: "var(--font-mono)",
+        fontSize: 12.5,
+        color: t.fg,
+        padding: "6px 10px",
+        background: t.bg,
+        borderLeft: `2px solid ${t.bar}`,
+        borderRadius: 2,
+        wordBreak: "break-word",
+        whiteSpace: "pre-wrap",
+        minHeight: 28,
+      }}
+    >
+      {value || (emptyHint ? <em style={{ opacity: 0.6 }}>(empty)</em> : "—")}
+    </div>
+  );
+}
+
+function DictRowPair({
+  k,
+  left,
+  right,
+}: {
+  k: string;
+  left: string | undefined;
+  right: string | undefined;
+}) {
+  const status: Status =
+    left === undefined && right !== undefined
+      ? "added"
+      : right === undefined && left !== undefined
+      ? "removed"
+      : left !== right
+      ? "changed"
+      : "same";
+  return (
+    <>
+      <DictCell k={k} value={left} status={status} side="left" />
+      <DictCell k={k} value={right} status={status} side="right" />
+    </>
+  );
+}
+
+function DictCell({
+  k,
+  value,
+  status,
   side,
 }: {
-  title: string;
-  subtitle: string;
-  recipe: Recipe;
-  other: Recipe;
+  k: string;
+  value: string | undefined;
+  status: Status;
   side: "left" | "right";
 }) {
-  const tone = title === "proposed" ? "ai" : "neutral";
+  // Determine the per-cell tone — "removed"/"added" only stylize the missing side
+  let cellStatus: Status = status;
+  if (status === "added" && side === "left") cellStatus = "removed";
+  if (status === "removed" && side === "right") cellStatus = "added";
+  const t = TONE[cellStatus];
+  const present = value !== undefined;
+  return (
+    <div
+      style={{
+        fontFamily: "var(--font-mono)",
+        fontSize: 12,
+        padding: "5px 10px",
+        background: t.bg,
+        borderLeft: `2px solid ${t.bar}`,
+        borderRadius: 2,
+        color: t.fg,
+        display: "grid",
+        gridTemplateColumns: "minmax(0, max-content) 1fr",
+        gap: 8,
+        wordBreak: "break-all",
+        opacity: present ? 1 : 0.55,
+      }}
+    >
+      <span style={{ color: present ? "var(--accent-ai)" : "inherit" }}>{k}</span>
+      <span>
+        {present ? (
+          value || <em style={{ opacity: 0.6 }}>(empty)</em>
+        ) : (
+          <span style={{ color: "var(--fg-faint)" }}>—</span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function ListCell({
+  items,
+  other,
+}: {
+  items: string[];
+  other: string[];
+}): ReactNode {
+  const otherSet = new Set(other);
+  const itemsSet = new Set(items);
+  const all = Array.from(new Set([...items, ...other])).sort();
   return (
     <div
       style={{
         background: "var(--bg-overlay)",
-        border: "1px solid var(--border-subtle)",
-        borderRadius: "var(--radius-sm)",
-        overflow: "hidden",
+        padding: "5px 10px",
+        borderLeft: "2px solid transparent",
+        borderRadius: 2,
+        fontFamily: "var(--font-mono)",
+        fontSize: 12,
+        display: "grid",
+        gap: 2,
       }}
     >
-      <div
-        style={{
-          padding: "10px 14px",
-          background: "var(--bg-elev-2)",
-          borderBottom: "1px solid var(--border-subtle)",
-          display: "flex",
-          alignItems: "baseline",
-          gap: 10,
-        }}
-      >
-        <Pill tone={tone}>{title}</Pill>
-        <code style={{ fontSize: 12, color: "var(--fg-muted)" }}>{subtitle}</code>
-      </div>
-      <div style={{ padding: 12, display: "grid", gap: 12 }}>
-        <ScalarRow
-          label="model"
-          value={recipe.model}
-          status={classify(recipe.model, other.model, side)}
-        />
-        {(recipe.description || other.description) && (
-          <ScalarRow
-            label="description"
-            value={recipe.description || ""}
-            status={classify(
-              recipe.description || "",
-              other.description || "",
-              side,
-            )}
-          />
-        )}
-        <DictBlock label="args" dict={recipe.args} other={other.args} side={side} />
-        <DictBlock label="env" dict={recipe.env} other={other.env} side={side} />
-        {recipe.mods.length > 0 && <ListBlock label="mods" items={recipe.mods} />}
-      </div>
-    </div>
-  );
-}
-
-function ScalarRow({
-  label,
-  value,
-  status,
-}: {
-  label: string;
-  value: string;
-  status: Status;
-}) {
-  const t = TONE[status];
-  return (
-    <div>
-      <div
-        style={{
-          fontFamily: "var(--font-mono)",
-          fontSize: 10.5,
-          color: "var(--fg-muted)",
-          letterSpacing: "0.16em",
-          textTransform: "uppercase",
-          marginBottom: 4,
-        }}
-      >
-        {label}
-      </div>
-      <div
-        style={{
-          fontFamily: "var(--font-mono)",
-          fontSize: 12.5,
-          color: status === "same" ? "var(--fg-secondary)" : "var(--fg-primary)",
-          padding: "6px 10px",
-          background: t.bg,
-          borderLeft: `2px solid ${t.bar}`,
-          borderRadius: 2,
-          wordBreak: "break-all",
-        }}
-      >
-        {value || <span style={{ color: "var(--fg-faint)" }}>(empty)</span>}
-      </div>
-    </div>
-  );
-}
-
-function DictBlock({
-  label,
-  dict,
-  other,
-  side,
-}: {
-  label: string;
-  dict: Record<string, string>;
-  other: Record<string, string>;
-  side: "left" | "right";
-}) {
-  // Union of keys across both sides so the rows align between the columns.
-  const keys = Array.from(new Set([...Object.keys(other), ...Object.keys(dict)])).sort();
-  if (keys.length === 0) return null;
-  return (
-    <div>
-      <div
-        style={{
-          fontFamily: "var(--font-mono)",
-          fontSize: 10.5,
-          color: "var(--fg-muted)",
-          letterSpacing: "0.16em",
-          textTransform: "uppercase",
-          marginBottom: 4,
-        }}
-      >
-        {label}
-      </div>
-      <div style={{ display: "grid", gap: 2 }}>
-        {keys.map((k) => {
-          const present = k in dict;
-          const v = present ? dict[k] : "";
-          let status: Status;
-          if (!present) {
-            status = side === "left" ? "added" : "removed";
-          } else if (!(k in other)) {
-            status = side === "right" ? "added" : "removed";
-          } else if (other[k] !== v) {
-            status = "changed";
-          } else {
-            status = "same";
-          }
-          const t = TONE[status];
-          return (
-            <div
-              key={k}
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 12,
-                padding: "4px 10px",
-                background: t.bg,
-                borderLeft: `2px solid ${t.bar}`,
-                borderRadius: 2,
-                display: "grid",
-                gridTemplateColumns: "minmax(0, auto) 1fr",
-                gap: 8,
-                color:
-                  status === "same"
-                    ? "var(--fg-secondary)"
-                    : status === "removed" && !present
-                    ? "var(--fg-faint)"
-                    : "var(--fg-primary)",
-                opacity: status === "removed" && !present ? 0.5 : 1,
-                textDecoration:
-                  status === "removed" && !present ? "line-through" : "none",
-              }}
-            >
-              <span style={{ color: "var(--accent-ai)" }}>{k}</span>
-              <span style={{ wordBreak: "break-all" }}>
-                {present ? v || <em style={{ opacity: 0.6 }}>(empty)</em> : "—"}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function ListBlock({ label, items }: { label: string; items: string[] }) {
-  return (
-    <div>
-      <div
-        style={{
-          fontFamily: "var(--font-mono)",
-          fontSize: 10.5,
-          color: "var(--fg-muted)",
-          letterSpacing: "0.16em",
-          textTransform: "uppercase",
-          marginBottom: 4,
-        }}
-      >
-        {label}
-      </div>
-      <div style={{ display: "grid", gap: 2 }}>
-        {items.map((it) => (
+      {all.map((m) => {
+        const here = itemsSet.has(m);
+        const there = otherSet.has(m);
+        let status: Status = "same";
+        if (here && !there) status = "added";
+        else if (!here && there) status = "removed";
+        const t = TONE[status];
+        return (
           <div
-            key={it}
+            key={m}
             style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 12,
-              padding: "4px 10px",
-              color: "var(--fg-secondary)",
+              padding: "2px 6px",
+              background: t.bg,
+              borderLeft: `2px solid ${t.bar}`,
+              borderRadius: 2,
+              color: here ? t.fg : "var(--fg-faint)",
+              opacity: here ? 1 : 0.55,
+              textDecoration: here ? "none" : "line-through",
             }}
           >
-            · {it}
+            · {m}
           </div>
-        ))}
-      </div>
+        );
+      })}
     </div>
   );
 }

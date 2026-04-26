@@ -340,7 +340,8 @@ export default function RecipeDetailPage() {
                 setDraft((d) => ({
                   ...d,
                   model: pendingDraft.model || d.model,
-                  description: pendingDraft.description ?? d.description,
+                  // Never let an empty AI description blank out the saved one.
+                  description: pendingDraft.description || d.description || "",
                   args: pendingDraft.args ?? {},
                   env: pendingDraft.env ?? {},
                 }));
