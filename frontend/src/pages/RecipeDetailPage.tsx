@@ -9,6 +9,7 @@ import ModPicker from "../components/ModPicker";
 import PageHeader from "../components/PageHeader";
 import RecipeAIAssist from "../components/RecipeAIAssist";
 import RecipeDiffView from "../components/RecipeDiffView";
+import RecipeHistoryTab from "../components/RecipeHistoryTab";
 import Tabs from "../components/Tabs";
 import {
   Recipe,
@@ -41,7 +42,7 @@ export default function RecipeDetailPage() {
   const updateRaw = useUpdateRecipeRaw();
   const del = useDeleteRecipe();
 
-  const [tab, setTab] = useState<"form" | "yaml" | "diff">("form");
+  const [tab, setTab] = useState<"form" | "yaml" | "diff" | "history">("form");
   const [draft, setDraft] = useState<Recipe>(EMPTY);
   const [yamlDraft, setYamlDraft] = useState<string>("");
   const [dirty, setDirty] = useState(false);
@@ -142,10 +143,11 @@ export default function RecipeDetailPage() {
         <div>
           <Tabs
             active={tab}
-            onChange={(id) => setTab(id as "form" | "yaml" | "diff")}
+            onChange={(id) => setTab(id as "form" | "yaml" | "diff" | "history")}
             tabs={[
               { id: "form", label: "Form" },
               { id: "yaml", label: "YAML" },
+              ...(!isNew ? [{ id: "history", label: "History" }] : []),
               ...(pendingDraft
                 ? [
                     {
@@ -365,6 +367,8 @@ export default function RecipeDetailPage() {
               }}
             />
           )}
+
+          {tab === "history" && name && <RecipeHistoryTab name={name} />}
         </div>
 
         <aside style={{ display: "grid", gap: 16, alignContent: "start" }}>

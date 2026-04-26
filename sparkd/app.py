@@ -30,6 +30,7 @@ from sparkd.services.library import LibraryService
 from sparkd.services.mod import ModService
 from sparkd.services.recipe import RecipeService
 from sparkd.services.status import StatusService
+from sparkd.services.versions import RecipeVersionService
 from sparkd.services.upstream import UpstreamService
 from sparkd.ssh.pool import SSHPool
 
@@ -85,8 +86,11 @@ def build_app() -> FastAPI:
     app.state.status = StatusService(boxes=app.state.boxes, pool=pool)
     app.state.hf = HFCatalogService()
     app.state.mods = ModService()
+    app.state.recipe_versions = RecipeVersionService()
     app.state.upstream = UpstreamService(
-        library=app.state.library, mods=app.state.mods
+        library=app.state.library,
+        mods=app.state.mods,
+        versions=app.state.recipe_versions,
     )
     app.state.advisor = AdvisorService(port=advisor_config.build_port())
     # All HTTP API endpoints are namespaced under /api so SPA routes like

@@ -1,7 +1,14 @@
 from sparkd.db.engine import init_engine, session_scope, shutdown
-from sparkd.db.models import AdvisorSessionRow, AuditLog, Base, Box, Launch
+from sparkd.db.models import (
+    AdvisorSessionRow,
+    AuditLog,
+    Base,
+    Box,
+    Launch,
+    RecipeVersion,
+)
 
 __all__ = [
     "init_engine", "session_scope", "shutdown",
-    "Base", "Box", "Launch", "AuditLog", "AdvisorSessionRow",
+    "Base", "Box", "Launch", "AuditLog", "AdvisorSessionRow", "RecipeVersion",
 ]

@@ -60,6 +60,29 @@ class AuditLog(Base):
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
+class RecipeVersion(Base):
+    """Append-only snapshot of a recipe's YAML on every save.
+
+    The current state is the file at sparkd/library/recipes/<name>.yaml; this
+    table is the history. Revert writes an older snapshot as a NEW row so the
+    audit log is preserved.
+    """
+
+    __tablename__ = "recipe_versions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String, index=True)
+    version: Mapped[int] = mapped_column()
+    yaml_text: Mapped[str] = mapped_column(String)
+    source: Mapped[str] = mapped_column(
+        String, default="manual"
+    )  # manual | raw | sync | ai | revert
+    note: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+
+
 class AdvisorSessionRow(Base):
     __tablename__ = "advisor_sessions"
 

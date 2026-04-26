@@ -26,9 +26,15 @@ class UpstreamService:
     when later synced to a box.
     """
 
-    def __init__(self, library: LibraryService, mods: ModService | None = None) -> None:
+    def __init__(
+        self,
+        library: LibraryService,
+        mods: ModService | None = None,
+        versions: "RecipeVersionService | None" = None,
+    ) -> None:
         self.library = library
         self.mods = mods or ModService()
+        self.versions = versions
 
     async def sync(self, req: UpstreamSyncRequest) -> UpstreamSyncResult:
         result = UpstreamSyncResult(repo=req.repo, branch=req.branch)
@@ -73,6 +79,13 @@ class UpstreamService:
                     continue
                 try:
                     self.library.save_recipe_raw(stem, raw.text)
+                    if self.versions is not None:
+                        await self.versions.record(
+                            stem,
+                            raw.text,
+                            source="sync",
+                            note=f"synced from {req.repo}@{req.branch}",
+                        )
                 except Exception as exc:  # noqa: BLE001
                     result.errors.append(
                         UpstreamSyncError(name=stem, message=str(exc))
