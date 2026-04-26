@@ -1,5 +1,6 @@
-import { Link, Route, Routes } from "react-router-dom";
+import { Route, Routes } from "react-router-dom";
 
+import Shell from "./components/Shell";
 import AdvisorPage from "./pages/AdvisorPage";
 import BoxesPage from "./pages/BoxesPage";
 import LaunchPage from "./pages/LaunchPage";
@@ -10,16 +11,7 @@ import StatusPage from "./pages/StatusPage";
 
 export default function App() {
   return (
-    <div style={{ fontFamily: "system-ui", padding: 16 }}>
-      <nav style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
-        <Link to="/">Boxes</Link>
-        <Link to="/recipes">Recipes</Link>
-        <Link to="/launch">Launch</Link>
-        <Link to="/status">Status</Link>
-        <Link to="/advisor">Advisor</Link>
-        <Link to="/optimize">Optimize</Link>
-        <Link to="/mods">Mods</Link>
-      </nav>
+    <Shell>
       <Routes>
         <Route path="/" element={<BoxesPage />} />
         <Route path="/recipes" element={<RecipesPage />} />
@@ -29,6 +21,6 @@ export default function App() {
         <Route path="/optimize" element={<OptimizePage />} />
         <Route path="/mods" element={<ModsPage />} />
       </Routes>
-    </div>
+    </Shell>
   );
 }

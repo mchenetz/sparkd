@@ -1,0 +1,63 @@
+/* sparkd — command center design tokens */
+
+:root {
+  /* Surface (deep navy-black, slightly warm) */
+  --bg-base: #0a0d12;
+  --bg-elev-1: #0f131a;
+  --bg-elev-2: #141923;
+  --bg-elev-3: #1a202c;
+  --bg-overlay: #060810;
+
+  /* Borders & dividers */
+  --border-subtle: #1c222d;
+  --border-strong: #2a3140;
+  --border-accent: #3a4555;
+
+  /* Text */
+  --fg-primary: #ece8e1;     /* warm off-white */
+  --fg-secondary: #a8b0bd;
+  --fg-muted: #6c7486;
+  --fg-faint: #3e4655;
+  --fg-inverse: #0a0d12;
+
+  /* Signals */
+  --signal-healthy: #4dffa6; /* cooled mint */
+  --signal-info: #6cb6ff;
+  --signal-warn: #ffb547;
+  --signal-danger: #ff5961;
+  --signal-quiet: #4a5268;
+
+  /* AI accent — reserved for advisor surfaces */
+  --accent-ai: #ff7733;
+  --accent-ai-soft: #ff993322;
+  --accent-ai-glow: 0 0 20px rgba(255, 119, 51, 0.18);
+
+  /* Type */
+  --font-display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --font-body: "Bricolage Grotesque", -apple-system, "Helvetica Neue", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Menlo, monospace;
+
+  --leading-tight: 1.1;
+  --leading-snug: 1.3;
+  --leading-base: 1.5;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  /* Shadow / glow */
+  --shadow-card: 0 1px 0 0 rgba(255, 255, 255, 0.02) inset,
+                 0 12px 32px -12px rgba(0, 0, 0, 0.6);
+  --shadow-floating: 0 24px 48px -12px rgba(0, 0, 0, 0.7);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* Layout */
+  --sidebar-w: 232px;
+  --topbar-h: 48px;
+  --content-pad: 32px;
+  --content-max: 1280px;
+}
