@@ -336,18 +336,28 @@ export default function RecipeDetailPage() {
             <RecipeDiffView
               base={draft}
               proposed={pendingDraft}
-              onApply={() => {
-                setDraft((d) => ({
-                  ...d,
-                  model: pendingDraft.model || d.model,
+              onApply={async () => {
+                const next: Recipe = {
+                  ...draft,
+                  model: pendingDraft.model || draft.model,
                   // Never let an empty AI description blank out the saved one.
-                  description: pendingDraft.description || d.description || "",
+                  description:
+                    pendingDraft.description || draft.description || "",
                   args: pendingDraft.args ?? {},
                   env: pendingDraft.env ?? {},
-                }));
-                setDirty(true);
+                };
+                setDraft(next);
                 setPendingDraft(null);
                 setTab("form");
+                // Persist immediately so the recipes list refreshes. For brand
+                // new recipes (no name yet) keep the form dirty so the user
+                // can fill in name/model and then save.
+                if (!isNew && next.name && next.model) {
+                  await update.mutateAsync(next);
+                  setDirty(false);
+                } else {
+                  setDirty(true);
+                }
               }}
               onDiscard={() => {
                 setPendingDraft(null);
