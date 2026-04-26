@@ -21,9 +21,20 @@ async def launch_log_stream(ws: WebSocket, launch_id: str) -> None:
         row = await s.get(Box, rec.box_id)
         target = ws.app.state.boxes._target_for(row)
     log_path = rec.log_path or f"~/.sparkd-launches/{launch_id}.log"
-    # `tail -F` follows the file even if it's recreated and waits if it
-    # doesn't exist yet.
-    cmd = f"tail -F {log_path} 2>&1"
+    # If the log file doesn't exist yet, wait briefly for it to appear (the
+    # `nohup ...` from launch starts asynchronously). After that, hand off to
+    # `tail -F` which follows the file even if it's recreated. Older launch
+    # records that predate the log-redirect change have no on-disk log; in
+    # that case emit a clear message rather than tail's terse 'cannot open'.
+    cmd = (
+        f"if [ -f {log_path} ] || "
+        f"( for i in 1 2 3 4 5; do sleep 0.4; [ -f {log_path} ] && exit 0; done; exit 1 ); "
+        f"then tail -F {log_path} 2>&1; "
+        f"else echo \"no log file for launch {launch_id}.\"; "
+        f"echo \"this usually means the launch was created before the log-redirect fix, \"; "
+        f"echo \"or ./run-recipe.sh failed before any output could be redirected.\"; "
+        f"fi"
+    )
     try:
         async for channel, line in pool.stream(target, cmd):
             await ws.send_json({"channel": channel, "line": line})
