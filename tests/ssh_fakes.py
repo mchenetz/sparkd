@@ -14,12 +14,21 @@ class FakeBox:
     handlers: dict[str, tuple[str, str, int]] = field(default_factory=dict)
     received: list[str] = field(default_factory=list)
     streaming: dict[str, Callable[[asyncssh.SSHServerProcess], Any]] = field(default_factory=dict)
+    # Reply used when no exact match in `handlers`. Defaults to a clear
+    # exit=127 so accidental misses surface, but tests whose commands embed
+    # runtime state (UUIDs, paths) can opt into a permissive default.
+    default_reply: tuple[str, str, int] = field(
+        default_factory=lambda: ("", "unknown command\n", 127)
+    )
 
     def reply(self, cmd: str, stdout: str = "", stderr: str = "", exit: int = 0) -> None:
         self.handlers[cmd] = (stdout, stderr, exit)
 
     def stream(self, cmd: str, fn: Callable[[asyncssh.SSHServerProcess], Any]) -> None:
         self.streaming[cmd] = fn
+
+    def set_default(self, stdout: str = "", stderr: str = "", exit: int = 0) -> None:
+        self.default_reply = (stdout, stderr, exit)
 
 
 class _Server(asyncssh.SSHServer):
@@ -34,7 +43,7 @@ async def _process(box: FakeBox, process: asyncssh.SSHServerProcess) -> None:
         await box.streaming[cmd](process)
         process.exit(0)
         return
-    out, err, code = box.handlers.get(cmd, ("", f"unknown command: {cmd}\n", 127))
+    out, err, code = box.handlers.get(cmd, box.default_reply)
     if out:
         process.stdout.write(out)
     if err:

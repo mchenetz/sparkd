@@ -28,10 +28,7 @@ async def env(sparkd_home, fake_box, monkeypatch):
         return None
 
     monkeypatch.setattr(type(app.state.launches), "_sync_files", fake_sync)
-    box.reply(
-        "bash -lc 'cd ~/spark-vllm-docker && ./run-recipe.sh r1' & echo $!",
-        stdout="12345\n",
-    )
+    box.set_default(stdout="12345\n", exit=0)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c, app, box

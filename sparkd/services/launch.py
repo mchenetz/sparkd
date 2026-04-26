@@ -56,15 +56,21 @@ class LaunchService:
             )
         await self._sync_files(body.recipe, body.box_id, body.mods)
         launch_id = uuid.uuid4().hex[:12]
+        log_path = f"~/.sparkd-launches/{launch_id}.log"
         async with session_scope() as s:
             box_row = await s.get(Box, body.box_id)
             if box_row is None:
                 raise NotFoundError("box", body.box_id)
             target = self.boxes._target_for(box_row)
-            # recipe name + repo_path are validated/configured; safe to interpolate
+            # nohup + redirect so the recipe survives the SSH session closing,
+            # and so log output goes to a known file we can tail later.
+            # Recipe name + repo_path are validated/configured upstream so
+            # they're safe to interpolate.
             cmd = (
-                f"bash -lc 'cd {box_row.repo_path} "
-                f"&& ./run-recipe.sh {body.recipe}' & echo $!"
+                f"mkdir -p ~/.sparkd-launches && "
+                f"( nohup bash -lc 'cd {box_row.repo_path} "
+                f"&& ./run-recipe.sh {body.recipe}' "
+                f"> {log_path} 2>&1 < /dev/null & ) ; echo $!"
             )
         result = await self.pool.run(target, cmd)
         if result.exit_status not in (0, None):
@@ -79,6 +85,7 @@ class LaunchService:
                 recipe_snapshot_json=recipe.model_dump(),
                 mods_json=body.mods,
                 state=LaunchState.starting.value,
+                log_path=log_path,
                 container_id=None,
                 command=cmd,
             )

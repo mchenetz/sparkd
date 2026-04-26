@@ -20,10 +20,10 @@ async def launch_log_stream(ws: WebSocket, launch_id: str) -> None:
     async with session_scope() as s:
         row = await s.get(Box, rec.box_id)
         target = ws.app.state.boxes._target_for(row)
-    cmd = (
-        f"docker logs -f $(docker ps -q --filter "
-        f"label=sparkd.launch={launch_id}) 2>&1 || tail -f /var/log/sparkd/{launch_id}.log"
-    )
+    log_path = rec.log_path or f"~/.sparkd-launches/{launch_id}.log"
+    # `tail -F` follows the file even if it's recreated and waits if it
+    # doesn't exist yet.
+    cmd = f"tail -F {log_path} 2>&1"
     try:
         async for channel, line in pool.stream(target, cmd):
             await ws.send_json({"channel": channel, "line": line})

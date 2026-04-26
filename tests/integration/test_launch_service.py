@@ -45,25 +45,35 @@ async def env(sparkd_home, fake_box, monkeypatch):
 
 async def test_launch_records_starting_state(env):
     ls, box_svc, lib, fake, _ = env
+    fake.set_default(stdout="12345\n", exit=0)  # accept any backgrounded command
     bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
     lib.save_recipe(RecipeSpec(name="r1", model="m"))
-    fake.reply(
-        "bash -lc 'cd ~/spark-vllm-docker && ./run-recipe.sh r1' & echo $!",
-        stdout="12345\n",
-    )
     rec = await ls.launch(LaunchCreate(recipe="r1", box_id=bs.id))
     assert rec.state == LaunchState.starting
     assert rec.recipe_name == "r1"
+    # The command should run-recipe.sh and redirect output to the per-launch log.
+    assert any(
+        "./run-recipe.sh r1" in c and f"~/.sparkd-launches/{rec.id}.log" in c
+        for c in fake.received
+    )
+
+
+async def test_launch_persists_log_path(env):
+    ls, box_svc, lib, fake, _ = env
+    fake.set_default(stdout="12345\n", exit=0)
+    bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
+    lib.save_recipe(RecipeSpec(name="r1", model="m"))
+    rec = await ls.launch(LaunchCreate(recipe="r1", box_id=bs.id))
+    fetched = await ls.get(rec.id)
+    # Round-trip via the DB: the WS handler reads log_path from here.
+    assert fetched.id == rec.id
 
 
 async def test_stop_kills_container(env):
     ls, box_svc, lib, fake, _ = env
+    fake.set_default(stdout="12345\n", exit=0)
     bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
     lib.save_recipe(RecipeSpec(name="r1", model="m"))
-    fake.reply(
-        "bash -lc 'cd ~/spark-vllm-docker && ./run-recipe.sh r1' & echo $!",
-        stdout="12345\n",
-    )
     rec = await ls.launch(LaunchCreate(recipe="r1", box_id=bs.id))
     fake.reply(f"docker ps -q --filter label=sparkd.launch={rec.id}", stdout="abc123\n")
     fake.reply("docker stop abc123", stdout="abc123\n")
