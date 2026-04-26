@@ -112,8 +112,14 @@ class BoxService:
         ]
         if not gpus:
             raise UpstreamError("nvidia-smi returned no GPUs")
-        gpu_model = gpus[0][0]
-        vram_mib = int(gpus[0][1])
+        gpu_model = gpus[0][0] or "unknown"
+        # nvidia-smi can report `[N/A]` for memory.total in some driver states
+        # or on hosts without a real GPU. Treat any non-numeric value as 0 so
+        # we still return a usable BoxCapabilities and the caller can decide.
+        try:
+            vram_mib = int(gpus[0][1]) if len(gpus[0]) > 1 else 0
+        except (ValueError, TypeError):
+            vram_mib = 0
         nvcc = await self.pool.run(target, "nvcc --version 2>/dev/null || true")
         cuda = None
         m = re.search(r"release (\S+)", nvcc.stdout)

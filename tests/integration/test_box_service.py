@@ -53,6 +53,29 @@ async def test_capabilities_parses_nvidia_smi(svc, fake_box, monkeypatch):
     assert caps.ib_interface == "mlx5_0"
 
 
+async def test_capabilities_tolerates_na_memory(svc, fake_box, monkeypatch):
+    """nvidia-smi can return `[N/A]` for memory.total; we should not crash."""
+    box, port = fake_box
+    box.reply(
+        "nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits",
+        stdout="NVIDIA GB10, [N/A], 555.42\n",
+    )
+    box.reply("nvcc --version 2>/dev/null || true", stdout="")
+    box.reply("ls /sys/class/infiniband 2>/dev/null || true", stdout="")
+    spec = await svc.create(BoxCreate(name="x", host="127.0.0.1", port=port, user="x"))
+    monkeypatch.setattr(
+        svc,
+        "_target_for",
+        lambda b: SSHTarget(
+            host="127.0.0.1", port=port, user="x", use_agent=False, password="y"
+        ),
+    )
+    caps = await svc.capabilities(spec.id, refresh=True)
+    assert caps.gpu_count == 1
+    assert caps.gpu_model == "NVIDIA GB10"
+    assert caps.vram_per_gpu_gb == 0
+
+
 async def test_test_connection_returns_true_when_ssh_ok(svc, fake_box, monkeypatch):
     box, port = fake_box
     box.reply("true", stdout="")
