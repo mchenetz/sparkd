@@ -33,6 +33,65 @@ class HFCatalogService:
         self._cache[model_id] = (now, info)
         return info
 
+    async def search(
+        self,
+        *,
+        query: str | None = None,
+        pipeline_tag: str | None = None,
+        library: str | None = None,
+        sort: str = "trending_score",
+        direction: int = -1,
+        limit: int = 24,
+    ) -> list[dict]:
+        """Search Hugging Face Hub for models. Returns lightweight summaries
+        suitable for a list/browser UI: id, downloads, likes, lastModified,
+        pipeline_tag, tags, library_name."""
+        params: dict[str, str | int] = {
+            "limit": max(1, min(int(limit), 100)),
+            "sort": sort,
+            "direction": direction,
+        }
+        if query:
+            params["search"] = query
+        # The HF API accepts repeated `filter=` for AND-ing — we only filter
+        # by one tag at a time so a single value is fine.
+        filters: list[str] = []
+        if pipeline_tag:
+            filters.append(pipeline_tag)
+        if library:
+            filters.append(library)
+        url = "https://huggingface.co/api/models"
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            try:
+                r = await client.get(
+                    url,
+                    params=[*params.items(), *(("filter", f) for f in filters)],
+                )
+            except httpx.HTTPError:
+                return []
+        if r.status_code != 200:
+            return []
+        body = r.json()
+        if not isinstance(body, list):
+            return []
+        out: list[dict] = []
+        for entry in body:
+            out.append(
+                {
+                    "id": entry.get("modelId") or entry.get("id") or "",
+                    "downloads": entry.get("downloads") or 0,
+                    "likes": entry.get("likes") or 0,
+                    "last_modified": entry.get("lastModified")
+                    or entry.get("last_modified"),
+                    "pipeline_tag": entry.get("pipeline_tag") or "",
+                    "library_name": entry.get("library_name") or "",
+                    "tags": entry.get("tags") or [],
+                    "private": bool(entry.get("private")),
+                    "gated": entry.get("gated") or False,
+                }
+            )
+        return out
+
     async def _fetch_remote(self, model_id: str, now: datetime) -> HFModelInfo:
         url = f"https://huggingface.co/api/models/{model_id}"
         async with httpx.AsyncClient(timeout=10.0) as client:
