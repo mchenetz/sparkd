@@ -67,10 +67,17 @@ class LaunchService:
             # and so log output goes to a known file we can tail later.
             # Recipe name + repo_path are validated/configured upstream so
             # they're safe to interpolate.
+            #
+            # Pipe `yes` into the script so the upstream `run-recipe.py`'s
+            # interactive prompts (e.g. "Build now? [y/N]" on first run when
+            # the vllm-node image hasn't been built yet) auto-answer "yes".
+            # Without this, input() raises EOFError because we redirect
+            # stdin from /dev/null and the launch fails before docker even
+            # starts.
             cmd = (
                 f"mkdir -p ~/.sparkd-launches && "
                 f"( nohup bash -lc 'cd {box_row.repo_path} "
-                f"&& ./run-recipe.sh {body.recipe}' "
+                f"&& yes | ./run-recipe.sh {body.recipe}' "
                 f"> {log_path} 2>&1 < /dev/null & ) ; echo $!"
             )
         result = await self.pool.run(target, cmd)
