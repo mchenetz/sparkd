@@ -88,11 +88,19 @@ class LibraryService:
             raise ValidationError("recipe yaml must be a mapping at the top level")
         if not parsed.get("model"):
             raise ValidationError(f"recipe {name!r} has no model field")
+        # Validate the parsed view BEFORE touching disk, so a failed validation
+        # never leaves an orphan file behind. The slug used as filename wins;
+        # on-disk YAML is preserved verbatim once we get past validation.
+        try:
+            spec = RecipeSpec(**{**parsed, "name": name})
+        except Exception as exc:  # noqa: BLE001
+            raise ValidationError(
+                f"recipe {name!r} failed schema validation: {exc}"
+            ) from exc
         d = self._recipes_dir(None)
         d.mkdir(parents=True, exist_ok=True)
         (d / f"{name}.yaml").write_text(yaml_text)
-        # The slug used as filename wins for the parsed view; on-disk YAML untouched.
-        return RecipeSpec(**{**parsed, "name": name})
+        return spec
 
     def load_recipe_text(self, name: str, *, box_id: str | None = None) -> str:
         """Return the raw YAML bytes for a recipe — preferring per-box override."""

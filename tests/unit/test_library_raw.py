@@ -67,6 +67,32 @@ def test_has_recipe(lib):
     assert lib.has_recipe("yep") is True
 
 
+def test_save_raw_accepts_null_env(lib):
+    """Some upstream YAMLs have `env:` with no value (parsed as None)."""
+    spec = lib.save_recipe_raw("with-null-env", "name: x\nmodel: a/b\nenv:\n")
+    assert spec.env == {}
+    assert lib.has_recipe("with-null-env")
+
+
+def test_save_raw_coerces_int_env_values(lib):
+    """Upstream sets env vars as ints (VLLM_MARLIN_USE_ATOMIC_ADD: 1)."""
+    yaml_text = "name: x\nmodel: a/b\nenv:\n  FOO: 1\n  BAR: true\n"
+    spec = lib.save_recipe_raw("with-int-env", yaml_text)
+    assert spec.env == {"FOO": "1", "BAR": "True"}
+    # On-disk YAML preserved verbatim — int stays int.
+    assert lib.load_recipe_text("with-int-env") == yaml_text
+
+
+def test_save_raw_does_not_leave_orphan_on_validation_failure(lib):
+    """Failed schema validation must not write a partial file."""
+    with pytest.raises(ValidationError):
+        # mods must be a list, not a string — RecipeSpec rejects.
+        lib.save_recipe_raw(
+            "mods-wrong", "name: m\nmodel: a/b\nmods: 'not-a-list'\n"
+        )
+    assert not lib.has_recipe("mods-wrong")
+
+
 def test_load_recipe_text_prefers_override(lib):
     lib.save_recipe_raw("r1", "name: r1\nmodel: a/b\n")
     # Construct an override the same way LibraryService does.
