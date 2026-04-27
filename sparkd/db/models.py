@@ -35,6 +35,7 @@ class Launch(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     box_id: Mapped[str] = mapped_column(ForeignKey("boxes.id"))
+    cluster_name: Mapped[str | None] = mapped_column(String, nullable=True)
     recipe_name: Mapped[str] = mapped_column(String)
     recipe_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     mods_json: Mapped[list[str]] = mapped_column(JSON, default=list)
