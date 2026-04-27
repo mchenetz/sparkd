@@ -102,14 +102,26 @@ The `cluster:<name>` prefix already works in the advisor. Make it the universal 
 
 - **`BoxesPage`**: remove the **"⟶ advise multi-node"** button from each cluster card per user request. The card stays informational (cluster name, node count, member list linking to BoxDetailPage).
 
-- **`BoxDetailPage` cluster field**: enhance the existing free-form `cluster` text input so that already-defined cluster names appear as selectable suggestions. Implementation is the native HTML `<datalist>` pattern — the input stays free-form (so you can create a brand-new cluster by typing a new name), but a dropdown of existing cluster names from `useClusters()` is offered for autocomplete:
+- **`BoxDetailPage` cluster field — chip input**: replace the plain `<input>` with a chip-style picker (a.k.a. tag/token input). Behavior:
+  - When empty, render an autocomplete `<input>`. As the user types, a dropdown shows existing cluster names from `useClusters()` filtered by the typed prefix; an "Enter to create `<typed>`" affordance appears for novel names.
+  - Pressing **Tab** or **Enter** commits the value (selected suggestion or typed novel name) and writes `draft.tags.cluster = <value>`. The input is then replaced with a **chip** rendering the cluster name and a small **×** remove control.
+  - Clicking **×** clears `draft.tags.cluster` and returns the field to the empty input state.
+  - Only one chip can exist at a time (the data model stays `tags.cluster: string`). When a chip is present, the autocomplete input is hidden.
+  - Clicking the chip body opens it back into editable input mode (chip → input with current value pre-filled), so the user can amend without removing-and-retyping.
+  - Keyboard: **Backspace** in an empty input does nothing destructive (chip is already gone). **Esc** closes the suggestion dropdown without committing. Suggestion list is keyboard-navigable with ↑/↓.
+  - Visual: chip uses the existing `Pill` token (`tone="info"`) with an inline `×` button, matching the cluster pills on `BoxesPage` for consistency.
+
+  **Component**: new `frontend/src/components/ChipInput.tsx`. Single-value, autocomplete-backed, novel-value-allowed. Props:
   ```tsx
-  <input list="known-clusters" value={draft.tags?.cluster ?? ""} ... />
-  <datalist id="known-clusters">
-    {clusters.data?.clusters.map((c) => <option key={c.name} value={c.name} />)}
-  </datalist>
+  type ChipInputProps = {
+    value: string;                       // "" means no chip
+    onChange: (next: string) => void;    // "" to clear
+    suggestions: string[];               // list of existing values to autocomplete from
+    placeholder?: string;
+    chipTone?: "info" | "neutral";       // styling token
+  };
   ```
-  No new component, no new dependency, no API change — `useClusters()` is already wired into the frontend.
+  Self-contained — no third-party tag-input dependency. Built on the existing `Pill` component for chip rendering. Reusable for future tag-style inputs (e.g., per-box arbitrary tags) without lock-in.
 
 - **Launch row rendering**: when `LaunchRecord.cluster_name` is present, render a small `Network` icon and a cluster pill alongside the box name on the launch list / status row, so multi-node launches are visually distinct.
 
@@ -161,13 +173,14 @@ Frontend
 - `frontend/src/pages/OptimizePage.tsx` — use `<TargetSelect>`.
 - `frontend/src/pages/AdvisorPage.tsx` — replace inline select with `<TargetSelect>`.
 - `frontend/src/pages/BoxesPage.tsx` — remove the "advise multi-node" button block.
-- `frontend/src/pages/BoxDetailPage.tsx` — `<datalist>` of existing cluster names on the cluster field for autocomplete.
+- `frontend/src/pages/BoxDetailPage.tsx` — replace the plain cluster `<input>` with `<ChipInput>` driven by `useClusters()`.
 - `frontend/src/components/RecipeAIAssist.tsx` — add `<TargetSelect>` for AI assist, pass `target_box_id` through.
 - `frontend/src/hooks/useLaunches.ts` — request body uses `target`; query filter uses `?target=`.
 - Launch list / status row component — render cluster pill when `cluster_name` is set.
 
 **Frontend (new)**
 - `frontend/src/components/TargetSelect.tsx` — shared selector.
+- `frontend/src/components/ChipInput.tsx` — single-value autocomplete-backed chip input, used by the cluster field on `BoxDetailPage`.
 
 **Tests**
 - `tests/integration/test_launches_routes.py` — single-box (regression) + cluster launch test asserting `-n host1,host2,...` lands on the head's SSH command.
