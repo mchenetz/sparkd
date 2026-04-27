@@ -39,7 +39,7 @@ from sparkd.ssh.pool import SSHPool
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     sparkd_logging.configure()
-    await init_engine(create_all=True)
+    await init_engine(migrate=True)
     try:
         yield
     finally:
