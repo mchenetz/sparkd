@@ -1,11 +1,11 @@
-import { Eye, Pause, Play, RotateCcw, Square, Trash2 } from "lucide-react";
+import { Eye, Network, Pause, Play, RotateCcw, Square, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 import { Card, EmptyState, Pill } from "../components/Card";
 import InspectModal from "../components/InspectModal";
 import LiveLog from "../components/LiveLog";
 import PageHeader from "../components/PageHeader";
-import { useBoxes } from "../hooks/useBoxes";
+import TargetSelect from "../components/TargetSelect";
 import {
   Launch,
   LaunchState,
@@ -29,10 +29,9 @@ const TONE: Record<LaunchState, "healthy" | "warn" | "danger" | "neutral" | "inf
 };
 
 export default function LaunchPage() {
-  const { data: boxes } = useBoxes();
   const { data: recipes } = useRecipes();
   const create = useCreateLaunch();
-  const [box, setBox] = useState("");
+  const [target, setTarget] = useState("");
   const [recipe, setRecipe] = useState("");
   const active = useLaunches(undefined, { activeOnly: true });
   const all = useLaunches(undefined, { activeOnly: false });
@@ -66,14 +65,7 @@ export default function LaunchPage() {
           new launch
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8 }}>
-          <select value={box} onChange={(e) => setBox(e.target.value)}>
-            <option value="">— target box —</option>
-            {(boxes ?? []).map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name} · {b.host}
-              </option>
-            ))}
-          </select>
+          <TargetSelect value={target} onChange={setTarget} placeholder="— target —" />
           <select value={recipe} onChange={(e) => setRecipe(e.target.value)}>
             <option value="">— recipe —</option>
             {(recipes ?? []).map((r) => (
@@ -84,8 +76,8 @@ export default function LaunchPage() {
           </select>
           <button
             className="primary"
-            disabled={!box || !recipe || create.isPending}
-            onClick={() => create.mutate({ recipe, box_id: box })}
+            disabled={!target || !recipe || create.isPending}
+            onClick={() => create.mutate({ recipe, target })}
           >
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
               <Play size={14} /> launch
@@ -151,6 +143,12 @@ function ActiveLaunch({ launch }: { launch: Launch }) {
         <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
           <Pill tone={TONE[launch.state]}>{launch.state}</Pill>
           <span style={{ fontWeight: 500 }}>{launch.recipe_name}</span>
+          {launch.cluster_name && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <Network size={11} style={{ color: "var(--fg-muted)" }} />
+              <Pill tone="info">{launch.cluster_name}</Pill>
+            </span>
+          )}
           <span
             style={{
               fontFamily: "var(--font-mono)",

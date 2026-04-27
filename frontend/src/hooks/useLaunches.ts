@@ -13,6 +13,7 @@ export type LaunchState =
 export type Launch = {
   id: string;
   box_id: string;
+  cluster_name: string | null;
   recipe_name: string;
   state: LaunchState;
   container_id: string | null;
@@ -24,13 +25,13 @@ export type Launch = {
 
 export const ACTIVE_STATES: LaunchState[] = ["starting", "healthy", "paused"];
 
-export function useLaunches(boxId?: string, opts?: { activeOnly?: boolean }) {
+export function useLaunches(target?: string, opts?: { activeOnly?: boolean }) {
   const params = new URLSearchParams();
-  if (boxId) params.set("box", boxId);
+  if (target) params.set("target", target);
   if (opts?.activeOnly) params.set("active", "true");
   const qs = params.toString();
   return useQuery({
-    queryKey: ["launches", boxId ?? null, opts?.activeOnly ?? false],
+    queryKey: ["launches", target ?? null, opts?.activeOnly ?? false],
     queryFn: () => api.get<Launch[]>(`/launches${qs ? `?${qs}` : ""}`),
     refetchInterval: 5000,
   });
@@ -39,7 +40,7 @@ export function useLaunches(boxId?: string, opts?: { activeOnly?: boolean }) {
 export function useCreateLaunch() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { recipe: string; box_id: string; mods?: string[] }) =>
+    mutationFn: (body: { recipe: string; target: string; mods?: string[] }) =>
       api.post<Launch>("/launches", body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["launches"] }),
   });
