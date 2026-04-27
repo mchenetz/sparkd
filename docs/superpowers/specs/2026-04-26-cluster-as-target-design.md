@@ -102,6 +102,15 @@ The `cluster:<name>` prefix already works in the advisor. Make it the universal 
 
 - **`BoxesPage`**: remove the **"⟶ advise multi-node"** button from each cluster card per user request. The card stays informational (cluster name, node count, member list linking to BoxDetailPage).
 
+- **`BoxDetailPage` cluster field**: enhance the existing free-form `cluster` text input so that already-defined cluster names appear as selectable suggestions. Implementation is the native HTML `<datalist>` pattern — the input stays free-form (so you can create a brand-new cluster by typing a new name), but a dropdown of existing cluster names from `useClusters()` is offered for autocomplete:
+  ```tsx
+  <input list="known-clusters" value={draft.tags?.cluster ?? ""} ... />
+  <datalist id="known-clusters">
+    {clusters.data?.clusters.map((c) => <option key={c.name} value={c.name} />)}
+  </datalist>
+  ```
+  No new component, no new dependency, no API change — `useClusters()` is already wired into the frontend.
+
 - **Launch row rendering**: when `LaunchRecord.cluster_name` is present, render a small `Network` icon and a cluster pill alongside the box name on the launch list / status row, so multi-node launches are visually distinct.
 
 ### 4. Advisor route cleanup
@@ -152,6 +161,7 @@ Frontend
 - `frontend/src/pages/OptimizePage.tsx` — use `<TargetSelect>`.
 - `frontend/src/pages/AdvisorPage.tsx` — replace inline select with `<TargetSelect>`.
 - `frontend/src/pages/BoxesPage.tsx` — remove the "advise multi-node" button block.
+- `frontend/src/pages/BoxDetailPage.tsx` — `<datalist>` of existing cluster names on the cluster field for autocomplete.
 - `frontend/src/components/RecipeAIAssist.tsx` — add `<TargetSelect>` for AI assist, pass `target_box_id` through.
 - `frontend/src/hooks/useLaunches.ts` — request body uses `target`; query filter uses `?target=`.
 - Launch list / status row component — render cluster pill when `cluster_name` is set.
