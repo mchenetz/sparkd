@@ -13,6 +13,7 @@ from sparkd.services.advisor import AdvisorService
 from sparkd.services.box import BoxService
 from sparkd.services.hf_catalog import HFCatalogService
 from sparkd.services.library import LibraryService
+from sparkd.services.targets import CLUSTER_PREFIX, resolve_target
 
 router = APIRouter(prefix="/advisor", tags=["advisor"])
 
@@ -33,34 +34,15 @@ def _lib(request: Request) -> LibraryService:
     return request.app.state.library
 
 
-CLUSTER_PREFIX = "cluster:"
-
-
 async def _resolve_caps(
     target_box_id: str | None, boxes: BoxService
 ) -> BoxCapabilities:
-    """Use real box capabilities when available, else canonical DGX Spark
-    defaults. For cluster targets, returns the FIRST node's caps (the
-    representative single-node view); cluster topology is supplied separately
-    via _resolve_cluster.
-    """
+    """Capabilities of the head box, falling back to canonical defaults."""
     if not target_box_id:
         return default_dgx_spark_caps()
-    if target_box_id.startswith(CLUSTER_PREFIX):
-        name = target_box_id[len(CLUSTER_PREFIX):]
-        try:
-            grouped = await boxes.list_clusters()
-        except Exception:  # noqa: BLE001
-            return default_dgx_spark_caps()
-        members = grouped.get(name) or []
-        if not members:
-            return default_dgx_spark_caps()
-        try:
-            return await boxes.capabilities(members[0].id)
-        except Exception:  # noqa: BLE001
-            return default_dgx_spark_caps()
     try:
-        return await boxes.capabilities(target_box_id)
+        resolved = await resolve_target(target_box_id, boxes)
+        return await boxes.capabilities(resolved.head_box.id)
     except Exception:  # noqa: BLE001  — degrade gracefully
         return default_dgx_spark_caps()
 
@@ -68,20 +50,17 @@ async def _resolve_caps(
 async def _resolve_cluster(
     target_box_id: str | None, boxes: BoxService
 ) -> dict | None:
-    """If target_box_id encodes a cluster (`cluster:<name>`), return its
-    topology dict for the prompt builder. Else return None."""
+    """Topology dict for cluster targets; None for single-box / unset."""
     if not target_box_id or not target_box_id.startswith(CLUSTER_PREFIX):
         return None
-    name = target_box_id[len(CLUSTER_PREFIX):]
     try:
-        grouped = await boxes.list_clusters()
+        resolved = await resolve_target(target_box_id, boxes)
     except Exception:  # noqa: BLE001
         return None
-    members = grouped.get(name) or []
-    if not members:
+    if resolved.kind != "cluster":
         return None
     nodes: list[dict] = []
-    for box in members:
+    for box in resolved.members:
         try:
             caps = await boxes.capabilities(box.id)
         except Exception:  # noqa: BLE001
@@ -99,7 +78,7 @@ async def _resolve_cluster(
     total_gpus = sum(n["gpu_count"] for n in nodes)
     total_vram = sum(n["gpu_count"] * n["vram_gb"] for n in nodes)
     return {
-        "name": name,
+        "name": resolved.cluster_name,
         "nodes": nodes,
         "total_gpus": total_gpus,
         "total_vram_gb": total_vram,
