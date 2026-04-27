@@ -9,7 +9,7 @@ import HFModelDetail from "../components/HFModelDetail";
 import PageHeader from "../components/PageHeader";
 import RecipeDraftPane from "../components/RecipeDraftPane";
 import SetupGate from "../components/SetupGate";
-import { useBoxes } from "../hooks/useBoxes";
+import TargetSelect from "../components/TargetSelect";
 import { useClusters } from "../hooks/useClusters";
 import {
   RecipeDraft,
@@ -20,7 +20,6 @@ import {
 const CLUSTER_PREFIX = "cluster:";
 
 export default function AdvisorPage() {
-  const boxes = useBoxes();
   const clusters = useClusters();
   const [params] = useSearchParams();
   const [target, setTarget] = useState("");
@@ -78,32 +77,12 @@ export default function AdvisorPage() {
                   generate recipe
                 </div>
                 <div style={{ display: "grid", gap: 10 }}>
-                  <select
+                  <TargetSelect
                     value={target}
-                    onChange={(e) => setTarget(e.target.value)}
-                  >
-                    <option value="">DGX Spark (default specs)</option>
-                    {clusterList.length > 0 && (
-                      <optgroup label="clusters (multi-node)">
-                        {clusterList.map((c) => (
-                          <option
-                            key={c.name}
-                            value={`${CLUSTER_PREFIX}${c.name}`}
-                          >
-                            {c.name} — {c.box_count} node
-                            {c.box_count === 1 ? "" : "s"}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    <optgroup label="single box">
-                      {(boxes.data ?? []).map((b) => (
-                        <option key={b.id} value={b.id}>
-                          {b.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  </select>
+                    onChange={setTarget}
+                    allowDefault
+                    defaultLabel="DGX Spark (default specs)"
+                  />
 
                   {activeCluster && (
                     <div
