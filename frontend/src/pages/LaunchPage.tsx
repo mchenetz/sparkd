@@ -37,28 +37,61 @@ export default function LaunchPage() {
   const [target, setTarget] = useState("");
   const [recipe, setRecipe] = useState("");
 
-  // Recipes are filtered by the target's node count. Single-box target → only
-  // single-node recipes; cluster of N → only recipes whose tp*pp == N. With
-  // no target chosen, show everything so the user can browse before picking.
+  // Recipes are filtered by node count, gated by user-toggleable chips at
+  // the top of the form. Each chip is a node count (e.g. 1, 2, 3) that
+  // appears either in the recipe library or in the chosen target. The
+  // default set of selected chips matches the target's size — single-box
+  // target picks {1}, cluster of N picks {N}, no target picks all
+  // available counts. Manual toggles stick until the target changes.
   const targetNodes = targetNodeCount(target, clustersData?.clusters ?? []);
   const allRecipes = recipes ?? [];
-  const filteredRecipes =
-    targetNodes === null
-      ? allRecipes
-      : allRecipes.filter((r) => recipeNodeCount(r) === targetNodes);
-  const hiddenCount = allRecipes.length - filteredRecipes.length;
 
-  // If the user changes target after picking a recipe and that recipe no
-  // longer fits, drop the selection so they can't accidentally launch it.
+  // Chip universe: every node count present in recipes, plus the target's
+  // own count (so the user always has a chip representing their target,
+  // even when no recipe currently matches it).
+  const recipeCountSet = new Set(allRecipes.map(recipeNodeCount));
+  if (targetNodes !== null) recipeCountSet.add(targetNodes);
+  const availableCounts = Array.from(recipeCountSet).sort((a, b) => a - b);
+
+  // The chip row tracks two layers:
+  //   - default selection, derived from the target (single-box → {1};
+  //     cluster of N → {N}; no target → all available counts)
+  //   - manual override, set when the user clicks any chip
+  // When the target changes we drop the override so defaults reapply.
+  const [manualOverride, setManualOverride] = useState<Set<number> | null>(
+    null,
+  );
   useEffect(() => {
-    if (
-      recipe &&
-      targetNodes !== null &&
-      !filteredRecipes.some((r) => r.name === recipe)
-    ) {
+    setManualOverride(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target]);
+
+  const defaultSelection: Set<number> =
+    targetNodes === null
+      ? new Set(availableCounts)
+      : new Set([targetNodes]);
+  const selectedCounts = manualOverride ?? defaultSelection;
+
+  function toggleCount(n: number) {
+    setManualOverride((prev) => {
+      const base = prev ?? defaultSelection;
+      const next = new Set(base);
+      if (next.has(n)) next.delete(n);
+      else next.add(n);
+      return next;
+    });
+  }
+
+  const filteredRecipes = allRecipes.filter((r) =>
+    selectedCounts.has(recipeNodeCount(r)),
+  );
+
+  // If the currently picked recipe stops fitting the chip selection, drop it.
+  useEffect(() => {
+    if (recipe && !filteredRecipes.some((r) => r.name === recipe)) {
       setRecipe("");
     }
-  }, [target, targetNodes, recipe, filteredRecipes]);
+  }, [recipe, filteredRecipes]);
   const active = useLaunches(undefined, { activeOnly: true });
   const all = useLaunches(undefined, { activeOnly: false });
   const [showHistory, setShowHistory] = useState(false);
@@ -90,15 +123,72 @@ export default function LaunchPage() {
         >
           new launch
         </div>
+        {availableCounts.length > 1 && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+              marginBottom: 10,
+            }}
+          >
+            <span
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: 11,
+                color: "var(--fg-faint)",
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+              }}
+            >
+              filter:
+            </span>
+            {availableCounts.map((n) => {
+              const selected = selectedCounts.has(n);
+              const count = allRecipes.filter(
+                (r) => recipeNodeCount(r) === n,
+              ).length;
+              return (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => toggleCount(n)}
+                  style={{
+                    padding: "3px 10px",
+                    borderRadius: 999,
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 11,
+                    letterSpacing: "0.06em",
+                    cursor: "pointer",
+                    background: selected
+                      ? "rgba(108,182,255,0.12)"
+                      : "transparent",
+                    border: `1px solid ${
+                      selected
+                        ? "var(--signal-info)"
+                        : "var(--border-subtle)"
+                    }`,
+                    color: selected
+                      ? "var(--signal-info)"
+                      : "var(--fg-muted)",
+                  }}
+                >
+                  {n}-node ({count})
+                </button>
+              );
+            })}
+          </div>
+        )}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8 }}>
           <TargetSelect value={target} onChange={setTarget} placeholder="— target —" />
           <select value={recipe} onChange={(e) => setRecipe(e.target.value)}>
             <option value="">
-              {targetNodes === null
-                ? "— recipe —"
-                : filteredRecipes.length === 0
-                  ? `— no recipes for ${targetNodes}-node target —`
-                  : `— recipe (${targetNodes}-node) —`}
+              {filteredRecipes.length === 0
+                ? selectedCounts.size === 0
+                  ? "— select a node-count filter —"
+                  : "— no recipes match filter —"
+                : "— recipe —"}
             </option>
             {filteredRecipes.map((r) => (
               <option key={r.name} value={r.name}>
@@ -116,20 +206,6 @@ export default function LaunchPage() {
             </span>
           </button>
         </div>
-        {targetNodes !== null && hiddenCount > 0 && (
-          <div
-            style={{
-              marginTop: 10,
-              fontFamily: "var(--font-mono)",
-              fontSize: 11,
-              color: "var(--fg-faint)",
-            }}
-          >
-            {hiddenCount} recipe{hiddenCount === 1 ? "" : "s"} hidden — only
-            recipes sized for {targetNodes} node
-            {targetNodes === 1 ? "" : "s"} (tp×pp) are shown.
-          </div>
-        )}
       </Card>
 
       <div style={{ display: "grid", gap: 16 }}>
