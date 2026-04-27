@@ -1,11 +1,12 @@
 import { Eye, Network, Pause, Play, RotateCcw, Square, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Card, EmptyState, Pill } from "../components/Card";
 import InspectModal from "../components/InspectModal";
 import LiveLog from "../components/LiveLog";
 import PageHeader from "../components/PageHeader";
 import TargetSelect from "../components/TargetSelect";
+import { useClusters } from "../hooks/useClusters";
 import {
   Launch,
   LaunchState,
@@ -18,6 +19,7 @@ import {
   useUnpauseLaunch,
 } from "../hooks/useLaunches";
 import { useRecipes } from "../hooks/useRecipes";
+import { recipeNodeCount, targetNodeCount } from "../utils/recipeNodes";
 
 const TONE: Record<LaunchState, "healthy" | "warn" | "danger" | "neutral" | "info"> = {
   starting: "warn",
@@ -30,9 +32,33 @@ const TONE: Record<LaunchState, "healthy" | "warn" | "danger" | "neutral" | "inf
 
 export default function LaunchPage() {
   const { data: recipes } = useRecipes();
+  const { data: clustersData } = useClusters();
   const create = useCreateLaunch();
   const [target, setTarget] = useState("");
   const [recipe, setRecipe] = useState("");
+
+  // Recipes are filtered by the target's node count. Single-box target → only
+  // single-node recipes; cluster of N → only recipes whose tp*pp == N. With
+  // no target chosen, show everything so the user can browse before picking.
+  const targetNodes = targetNodeCount(target, clustersData?.clusters ?? []);
+  const allRecipes = recipes ?? [];
+  const filteredRecipes =
+    targetNodes === null
+      ? allRecipes
+      : allRecipes.filter((r) => recipeNodeCount(r) === targetNodes);
+  const hiddenCount = allRecipes.length - filteredRecipes.length;
+
+  // If the user changes target after picking a recipe and that recipe no
+  // longer fits, drop the selection so they can't accidentally launch it.
+  useEffect(() => {
+    if (
+      recipe &&
+      targetNodes !== null &&
+      !filteredRecipes.some((r) => r.name === recipe)
+    ) {
+      setRecipe("");
+    }
+  }, [target, targetNodes, recipe, filteredRecipes]);
   const active = useLaunches(undefined, { activeOnly: true });
   const all = useLaunches(undefined, { activeOnly: false });
   const [showHistory, setShowHistory] = useState(false);
@@ -67,8 +93,14 @@ export default function LaunchPage() {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8 }}>
           <TargetSelect value={target} onChange={setTarget} placeholder="— target —" />
           <select value={recipe} onChange={(e) => setRecipe(e.target.value)}>
-            <option value="">— recipe —</option>
-            {(recipes ?? []).map((r) => (
+            <option value="">
+              {targetNodes === null
+                ? "— recipe —"
+                : filteredRecipes.length === 0
+                  ? `— no recipes for ${targetNodes}-node target —`
+                  : `— recipe (${targetNodes}-node) —`}
+            </option>
+            {filteredRecipes.map((r) => (
               <option key={r.name} value={r.name}>
                 {r.name}
               </option>
@@ -84,6 +116,20 @@ export default function LaunchPage() {
             </span>
           </button>
         </div>
+        {targetNodes !== null && hiddenCount > 0 && (
+          <div
+            style={{
+              marginTop: 10,
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              color: "var(--fg-faint)",
+            }}
+          >
+            {hiddenCount} recipe{hiddenCount === 1 ? "" : "s"} hidden — only
+            recipes sized for {targetNodes} node
+            {targetNodes === 1 ? "" : "s"} (tp×pp) are shown.
+          </div>
+        )}
       </Card>
 
       <div style={{ display: "grid", gap: 16 }}>
