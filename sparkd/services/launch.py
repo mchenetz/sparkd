@@ -20,6 +20,7 @@ from sparkd.schemas.launch import (
 from sparkd.services.box import BoxService
 from sparkd.services.library import LibraryService
 from sparkd.services.recipe import RecipeService
+from sparkd.services.targets import resolve_target
 from sparkd.ssh.pool import SSHPool, SSHTarget
 
 
@@ -27,6 +28,7 @@ def _to_record(row: Launch) -> LaunchRecord:
     return LaunchRecord(
         id=row.id,
         box_id=row.box_id,
+        cluster_name=row.cluster_name,
         recipe_name=row.recipe_name,
         state=LaunchState(row.state),
         container_id=row.container_id,
@@ -55,8 +57,10 @@ class LaunchService:
         await self.recipes.sync(name, box_id)
 
     async def launch(self, body: LaunchCreate) -> LaunchRecord:
-        recipe = self.library.load_recipe(body.recipe, box_id=body.box_id)
-        issues = await self.recipes.validate(recipe, body.box_id)
+        resolved = await resolve_target(body.target, self.boxes)
+        head_id = resolved.head_box.id
+        recipe = self.library.load_recipe(body.recipe, box_id=head_id)
+        issues = await self.recipes.validate(recipe, head_id)
         if issues:
             raise ValidationError(
                 "recipe failed pre-flight validation",
@@ -67,20 +71,29 @@ class LaunchService:
         # container by image (ancestor) for pause/restart/inspect/stop.
         try:
             raw_yaml = self.library.load_recipe_text(
-                body.recipe, box_id=body.box_id
+                body.recipe, box_id=head_id
             )
             raw_recipe = yaml.safe_load(raw_yaml) or {}
         except Exception:  # noqa: BLE001
             raw_recipe = {}
         container_image = (raw_recipe.get("container") or "vllm-node").strip()
-        await self._sync_files(body.recipe, body.box_id, body.mods)
+        await self._sync_files(body.recipe, head_id, body.mods)
         launch_id = uuid.uuid4().hex[:12]
         log_path = f"~/.sparkd-launches/{launch_id}.log"
         async with session_scope() as s:
-            box_row = await s.get(Box, body.box_id)
+            box_row = await s.get(Box, head_id)
             if box_row is None:
-                raise NotFoundError("box", body.box_id)
+                raise NotFoundError("box", head_id)
             target = self.boxes._target_for(box_row)
+            # Single-box: ./run-recipe.sh r1
+            # Cluster:    ./run-recipe.sh -n h1,h2,h3 r1
+            #   Upstream run-recipe.py invokes launch-cluster.sh with that
+            #   list; launch-cluster.sh scps to workers and bootstraps Ray.
+            if resolved.kind == "cluster":
+                node_csv = ",".join(b.host for b in resolved.members)
+                run_cmd = f"./run-recipe.sh -n {node_csv} {body.recipe}"
+            else:
+                run_cmd = f"./run-recipe.sh {body.recipe}"
             # nohup + redirect so the recipe survives the SSH session closing,
             # and so log output goes to a known file we can tail later.
             # Recipe name + repo_path are validated/configured upstream so
@@ -95,7 +108,7 @@ class LaunchService:
             cmd = (
                 f"mkdir -p ~/.sparkd-launches && "
                 f"( nohup bash -lc 'cd {box_row.repo_path} "
-                f"&& yes | ./run-recipe.sh {body.recipe}' "
+                f"&& yes | {run_cmd}' "
                 f"> {log_path} 2>&1 < /dev/null & ) ; echo $!"
             )
         result = await self.pool.run(target, cmd)
@@ -108,7 +121,8 @@ class LaunchService:
         async with session_scope() as s:
             row = Launch(
                 id=launch_id,
-                box_id=body.box_id,
+                box_id=head_id,
+                cluster_name=resolved.cluster_name,
                 recipe_name=body.recipe,
                 recipe_snapshot_json=snapshot,
                 mods_json=body.mods,
