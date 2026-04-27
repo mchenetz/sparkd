@@ -26,7 +26,7 @@ class FakePort:
             delta="", input_tokens=self.in_tok, output_tokens=self.out_tok, final=True
         )
 
-    async def stream_recipe(self, info, caps, history):
+    async def stream_recipe(self, info, caps, history, *, cluster=None):
         async for c in self._yield(history):
             yield c
 

@@ -14,6 +14,7 @@ from sparkd.db.engine import init_engine, shutdown
 from sparkd.errors import install_handlers
 from sparkd.routes.advisor import router as advisor_router
 from sparkd.routes.boxes import router as boxes_router
+from sparkd.routes.clusters import router as clusters_router
 from sparkd.routes.hf import router as hf_router
 from sparkd.routes.jobs import router as jobs_router
 from sparkd.routes.launches import router as launches_router
@@ -98,6 +99,7 @@ def build_app() -> FastAPI:
     # WebSocket routes stay at /ws/... — they don't conflict with SPA routes
     # because browsers don't navigate to ws:// URLs.
     app.include_router(boxes_router, prefix="/api")
+    app.include_router(clusters_router, prefix="/api")
     app.include_router(recipes_router, prefix="/api")
     app.include_router(launches_router, prefix="/api")
     app.include_router(status_router, prefix="/api")

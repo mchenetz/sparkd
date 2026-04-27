@@ -189,6 +189,22 @@ export default function BoxDetailPage() {
                 onChange={(e) => setField("repo_path", e.target.value)}
               />
             </Field>
+            <Field
+              label="cluster"
+              hint="boxes sharing a cluster name form a multi-node group"
+            >
+              <input
+                className="mono"
+                value={draft.tags?.cluster ?? ""}
+                onChange={(e) => {
+                  const next = { ...(draft.tags ?? {}) };
+                  if (e.target.value) next.cluster = e.target.value;
+                  else delete next.cluster;
+                  setField("tags", next);
+                }}
+                placeholder="alpha"
+              />
+            </Field>
             <Field label="ssh auth">
               <label
                 style={{

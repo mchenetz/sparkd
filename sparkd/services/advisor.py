@@ -134,12 +134,22 @@ class AdvisorService:
         info: HFModelInfo,
         caps: BoxCapabilities,
         user_msg: str | None = None,
+        cluster: dict | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         port = self._require_port()
         history = await self._load_history(session_id)
-        msg = user_msg or f"Generate a recipe for {info.id}"
+        if cluster:
+            msg = (
+                user_msg
+                or f"Generate a multi-node recipe for {info.id} on cluster "
+                f"{cluster.get('name', '?')} ({len(cluster.get('nodes') or [])} nodes)"
+            )
+        else:
+            msg = user_msg or f"Generate a recipe for {info.id}"
         try:
-            chunks = port.stream_recipe(info=info, caps=caps, history=history)
+            chunks = port.stream_recipe(
+                info=info, caps=caps, history=history, cluster=cluster
+            )
         except Exception as exc:  # noqa: BLE001
             raise UpstreamError(f"advisor: {exc}") from exc
         async for ev in self._drive(session_id, msg, chunks, "recipe"):

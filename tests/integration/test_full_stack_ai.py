@@ -24,7 +24,7 @@ class FakePort:
             yield AdvisorChunk(delta=ch)
         yield AdvisorChunk(delta="", input_tokens=10, output_tokens=20, final=True)
 
-    async def stream_recipe(self, info, caps, history):
+    async def stream_recipe(self, info, caps, history, *, cluster=None):
         async for c in self._yield(self.recipe_text):
             yield c
 

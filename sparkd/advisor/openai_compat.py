@@ -71,9 +71,15 @@ class OpenAICompatAdapter:
         )
 
     async def stream_recipe(
-        self, info: HFModelInfo, caps: BoxCapabilities, history: list[AdvisorMessage]
+        self,
+        info: HFModelInfo,
+        caps: BoxCapabilities,
+        history: list[AdvisorMessage],
+        *,
+        cluster: dict | None = None,
     ) -> AsyncIterator[AdvisorChunk]:
-        async for c in self._stream(SYSTEM_PROMPT, build_recipe_prompt(info, caps), history):
+        prompt = build_recipe_prompt(info, caps, cluster=cluster)
+        async for c in self._stream(SYSTEM_PROMPT, prompt, history):
             yield c
 
     async def stream_optimize(

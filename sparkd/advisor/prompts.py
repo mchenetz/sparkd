@@ -48,16 +48,51 @@ def _model_block(info: HFModelInfo) -> str:
     )
 
 
-def build_recipe_prompt(info: HFModelInfo, caps: BoxCapabilities) -> str:
-    return (
-        _model_block(info)
-        + "\n"
-        + _caps_block(caps)
-        + "\n"
-        + "Produce a RecipeDraft as JSON with keys: "
-        '`name` (slug derived from model), `model` (HF id), `args` (dict of '
-        'CLI flag → value strings), `env` (dict), `description`, `rationale`.\n'
+def _cluster_block(cluster: dict) -> str:
+    lines = [
+        "Multi-node cluster topology:",
+        f"- Cluster: {cluster.get('name', 'unknown')}",
+        f"- Nodes: {len(cluster.get('nodes') or [])}",
+    ]
+    for n in cluster.get("nodes") or []:
+        lines.append(
+            f"  · {n.get('name', '?')}: {n.get('gpu_count', 0)}× "
+            f"{n.get('gpu_model') or 'unknown'}, "
+            f"{n.get('vram_gb', 0)} GB VRAM, "
+            f"IB={n.get('ib') or 'none'}"
+        )
+    lines.append(f"- Total GPUs across cluster: {cluster.get('total_gpus', 0)}")
+    lines.append(f"- Aggregate VRAM: {cluster.get('total_vram_gb', 0)} GB")
+    lines.append("")
+    lines.append(
+        "This deployment spans MULTIPLE NODES. Recommend a topology that "
+        "uses --tensor-parallel-size to shard across the GPUs on each node "
+        "and --pipeline-parallel-size to stage across nodes (or set "
+        "--tensor-parallel-size to the cluster-wide GPU count if the "
+        "interconnect supports it). Set --distributed-executor-backend=ray "
+        "and document any required env vars (NCCL_SOCKET_IFNAME pinned to "
+        "the IB iface, GLOO_SOCKET_IFNAME, RAY_ADDRESS) in `env`. Note in "
+        "the rationale how to start the Ray cluster (head node + workers)."
     )
+    return "\n".join(lines)
+
+
+def build_recipe_prompt(
+    info: HFModelInfo,
+    caps: BoxCapabilities,
+    *,
+    cluster: dict | None = None,
+) -> str:
+    parts = [_model_block(info), "", _caps_block(caps), ""]
+    if cluster:
+        parts.append(_cluster_block(cluster))
+        parts.append("")
+    parts.append(
+        "Produce a RecipeDraft as JSON with keys: "
+        "`name` (slug derived from model), `model` (HF id), `args` (dict of "
+        "CLI flag → value strings), `env` (dict), `description`, `rationale`.\n"
+    )
+    return "\n".join(parts)
 
 
 def build_optimize_prompt(

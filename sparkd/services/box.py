@@ -41,6 +41,16 @@ class BoxService:
             ssh_key_path=row.ssh_key_path,
         )
 
+    async def list_clusters(self) -> dict[str, list[BoxSpec]]:
+        """Group boxes by the value of their `cluster` tag. Boxes without a
+        `cluster` tag are not part of any cluster."""
+        out: dict[str, list[BoxSpec]] = {}
+        for b in await self.list():
+            name = b.tags.get("cluster")
+            if name:
+                out.setdefault(name, []).append(b)
+        return out
+
     async def update(self, box_id: str, body: BoxCreate) -> BoxSpec:
         """Update a box's connection details. Capabilities aren't touched —
         if the host changed they'll be refreshed lazily on next access."""
