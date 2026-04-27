@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { Card, EmptyState, Pill } from "../components/Card";
+import ChipInput from "../components/ChipInput";
 import PageHeader from "../components/PageHeader";
 import {
   Box,
@@ -23,6 +24,7 @@ import {
   useUpdateBox,
 } from "../hooks/useBoxes";
 import { useBoxStatus } from "../hooks/useBoxStatus";
+import { useClusters } from "../hooks/useClusters";
 import { useLaunches } from "../hooks/useLaunches";
 
 export default function BoxDetailPage() {
@@ -47,6 +49,8 @@ export default function BoxDetailPage() {
 
   const status = useBoxStatus(id ?? null);
   const launches = useLaunches(id, { activeOnly: false });
+  const clusters = useClusters();
+  const knownClusters = (clusters.data?.clusters ?? []).map((c) => c.name);
   const launchesForBox = useMemo(
     () => (launches.data ?? []).filter((l) => l.box_id === id),
     [launches.data, id],
@@ -193,15 +197,15 @@ export default function BoxDetailPage() {
               label="cluster"
               hint="boxes sharing a cluster name form a multi-node group"
             >
-              <input
-                className="mono"
+              <ChipInput
                 value={draft.tags?.cluster ?? ""}
-                onChange={(e) => {
-                  const next = { ...(draft.tags ?? {}) };
-                  if (e.target.value) next.cluster = e.target.value;
-                  else delete next.cluster;
-                  setField("tags", next);
+                onChange={(next) => {
+                  const tags = { ...(draft.tags ?? {}) };
+                  if (next) tags.cluster = next;
+                  else delete tags.cluster;
+                  setField("tags", tags);
                 }}
+                suggestions={knownClusters}
                 placeholder="alpha"
               />
             </Field>
