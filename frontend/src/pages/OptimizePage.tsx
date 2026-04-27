@@ -7,18 +7,17 @@ import { Card } from "../components/Card";
 import PageHeader from "../components/PageHeader";
 import RecipeDraftPane from "../components/RecipeDraftPane";
 import SetupGate from "../components/SetupGate";
+import TargetSelect from "../components/TargetSelect";
 import {
   RecipeDraft,
   useCreateAdvisorSession,
   useOptimizeRecipe,
 } from "../hooks/useAdvisor";
-import { useBoxes } from "../hooks/useBoxes";
 import { useRecipes } from "../hooks/useRecipes";
 
 export default function OptimizePage() {
   const [params] = useSearchParams();
   const recipes = useRecipes();
-  const boxes = useBoxes();
   const [recipe, setRecipe] = useState(params.get("recipe") ?? "");
   const [boxId, setBoxId] = useState("");
   const [goals, setGoals] = useState("throughput");
@@ -68,14 +67,7 @@ export default function OptimizePage() {
                 </option>
               ))}
             </select>
-            <select value={boxId} onChange={(e) => setBoxId(e.target.value)}>
-              <option value="">DGX Spark (default specs)</option>
-              {(boxes.data ?? []).map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
+            <TargetSelect value={boxId} onChange={setBoxId} allowDefault />
             <input
               className="mono"
               value={goals}
