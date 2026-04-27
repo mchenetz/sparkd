@@ -21,14 +21,15 @@ ACTIVE_STATES = frozenset({"starting", "healthy", "paused"})
 
 class LaunchCreate(BaseModel):
     recipe: str = Field(min_length=1)
-    box_id: str = Field(min_length=1)
+    target: str = Field(min_length=1)  # box id, or "cluster:<name>"
     mods: list[str] = Field(default_factory=list)
     overrides: dict[str, str] = Field(default_factory=dict)
 
 
 class LaunchRecord(BaseModel):
     id: str
-    box_id: str
+    box_id: str  # head box for cluster launches; SSH-anchored
+    cluster_name: str | None = None  # populated for cluster targets
     recipe_name: str
     state: LaunchState
     container_id: str | None
