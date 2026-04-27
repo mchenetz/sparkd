@@ -1,6 +1,12 @@
-# Screenshots wanted
+# Screenshots
 
-Drop PNGs into this folder with the names below. The main README references them at these exact paths.
+The README references PNGs at the names below. **Dark-themed placeholder PNGs are checked in** so the README renders something sensible immediately — to swap in a real screenshot, just save it over the placeholder at the same path. No README edit required.
+
+If you want to regenerate the placeholders (e.g. to tweak the look), run:
+
+```
+uv run python docs/images/_make_placeholders.py
+```
 
 | filename | what it should show |
 |---|---|
