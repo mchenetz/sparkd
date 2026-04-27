@@ -11,6 +11,7 @@ import {
 import { Recipe, useUpdateRecipe } from "../hooks/useRecipes";
 import AdvisorChat from "./AdvisorChat";
 import { Card, Pill } from "./Card";
+import TargetSelect from "./TargetSelect";
 
 export default function RecipeAIAssist({
   recipe,
@@ -31,6 +32,7 @@ export default function RecipeAIAssist({
   const opt = useOptimizeRecipe();
   const [hfId, setHfId] = useState(recipe.model);
   const [goal, setGoal] = useState("throughput");
+  const [target, setTarget] = useState("");
   const [text, setText] = useState("");
   const busy = create.isPending || gen.isPending || opt.isPending;
   const configured = status.data?.configured ?? false;
@@ -71,6 +73,12 @@ export default function RecipeAIAssist({
           >
             fill from a hugging face model
           </div>
+          <TargetSelect
+            value={target}
+            onChange={setTarget}
+            allowDefault
+            defaultLabel="DGX Spark (default specs)"
+          />
           <div style={{ display: "flex", gap: 6 }}>
             <input
               className="mono"
@@ -86,7 +94,7 @@ export default function RecipeAIAssist({
                 setText("");
                 const r = await create.mutateAsync({
                   kind: "recipe",
-                  target_box_id: null,
+                  target_box_id: target || null,
                   hf_model_id: hfId,
                 });
                 const out = await gen.mutateAsync(r.id);
@@ -116,6 +124,14 @@ export default function RecipeAIAssist({
         >
           {isNew ? "optimize current recipe" : "tune this recipe"}
         </div>
+        {!isNew && (
+          <TargetSelect
+            value={target}
+            onChange={setTarget}
+            allowDefault
+            defaultLabel="DGX Spark (default specs)"
+          />
+        )}
         <div style={{ display: "flex", gap: 6 }}>
           <input
             className="mono"
@@ -133,7 +149,7 @@ export default function RecipeAIAssist({
               await update.mutateAsync(recipe);
               const r = await create.mutateAsync({
                 kind: "optimize",
-                target_box_id: null,
+                target_box_id: target || null,
                 target_recipe_name: recipe.name,
               });
               const out = await opt.mutateAsync({
