@@ -96,31 +96,6 @@ export default function BoxesPage() {
                       </Link>
                     ))}
                   </div>
-                  <div
-                    style={{
-                      marginTop: 10,
-                      paddingTop: 10,
-                      borderTop: "1px solid var(--border-subtle)",
-                      display: "flex",
-                      justifyContent: "flex-end",
-                    }}
-                  >
-                    <Link
-                      to={`/advisor?cluster=${encodeURIComponent(cl.name)}`}
-                      style={{ borderBottom: "none" }}
-                    >
-                      <button className="ghost">
-                        <span
-                          style={{
-                            color: "var(--accent-ai)",
-                            fontSize: 12,
-                          }}
-                        >
-                          ⟶ advise multi-node
-                        </span>
-                      </button>
-                    </Link>
-                  </div>
                 </Card>
               ))}
             </div>
