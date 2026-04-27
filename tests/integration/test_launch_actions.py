@@ -48,7 +48,7 @@ async def env(sparkd_home, fake_box, monkeypatch):
 async def _start_launch(ls, box_svc, lib, *, model="qwen/x"):
     bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
     lib.save_recipe(RecipeSpec(name="r1", model=model))
-    return await ls.launch(LaunchCreate(recipe="r1", box_id=bs.id))
+    return await ls.launch(LaunchCreate(recipe="r1", target=bs.id))
 
 
 async def test_pause_picks_model_match_when_multiple_candidates(env):
@@ -163,8 +163,8 @@ async def test_list_active_only_filters_terminal_states(env):
     ls, box_svc, lib, fake, _ = env
     bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
     lib.save_recipe(RecipeSpec(name="r1", model="m"))
-    a = await ls.launch(LaunchCreate(recipe="r1", box_id=bs.id))
-    b = await ls.launch(LaunchCreate(recipe="r1", box_id=bs.id))
+    a = await ls.launch(LaunchCreate(recipe="r1", target=bs.id))
+    b = await ls.launch(LaunchCreate(recipe="r1", target=bs.id))
     # mark one stopped manually
     from sparkd.db.engine import session_scope
     from sparkd.db.models import Launch

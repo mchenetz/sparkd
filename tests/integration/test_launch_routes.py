@@ -41,6 +41,38 @@ async def test_launch_creates_record(env):
         await client.post("/api/boxes", json={"name": "b", "host": "h", "user": "u"})
     ).json()["id"]
     await client.post("/api/recipes", json={"name": "r1", "model": "m"})
-    r = await client.post("/api/launches", json={"recipe": "r1", "box_id": bid})
+    r = await client.post("/api/launches", json={"recipe": "r1", "target": bid})
     assert r.status_code == 201
     assert r.json()["state"] == "starting"
+
+
+async def test_launch_route_accepts_cluster_target(env):
+    client, _app, _box = env
+    h = (
+        await client.post(
+            "/api/boxes",
+            json={
+                "name": "n1",
+                "host": "10.0.0.1",
+                "user": "u",
+                "tags": {"cluster": "alpha"},
+            },
+        )
+    ).json()
+    await client.post(
+        "/api/boxes",
+        json={
+            "name": "n2",
+            "host": "10.0.0.2",
+            "user": "u",
+            "tags": {"cluster": "alpha"},
+        },
+    )
+    await client.post("/api/recipes", json={"name": "r1", "model": "m"})
+    r = await client.post(
+        "/api/launches", json={"recipe": "r1", "target": "cluster:alpha"}
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["box_id"] == h["id"]
+    assert body["cluster_name"] == "alpha"

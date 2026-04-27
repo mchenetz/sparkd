@@ -3,13 +3,19 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request, Response
 
 from sparkd.schemas.launch import LaunchCreate, LaunchRecord
+from sparkd.services.box import BoxService
 from sparkd.services.launch import LaunchService
+from sparkd.services.targets import resolve_target
 
 router = APIRouter(prefix="/launches", tags=["launches"])
 
 
 def _ls(request: Request) -> LaunchService:
     return request.app.state.launches
+
+
+def _boxes(request: Request) -> BoxService:
+    return request.app.state.boxes
 
 
 @router.post("", response_model=LaunchRecord, status_code=201)
@@ -21,11 +27,20 @@ async def create_launch(
 
 @router.get("", response_model=list[LaunchRecord])
 async def list_launches(
-    box: str | None = None,
+    target: str | None = None,
     active: bool = False,
     ls: LaunchService = Depends(_ls),
+    boxes: BoxService = Depends(_boxes),
 ) -> list[LaunchRecord]:
-    return await ls.list(box_id=box, active_only=active)
+    """Filter launches by target. Single-box target → query directly. Cluster
+    target → union of launches across all member boxes."""
+    if target and target.startswith("cluster:"):
+        resolved = await resolve_target(target, boxes)
+        out: list[LaunchRecord] = []
+        for m in resolved.members:
+            out.extend(await ls.list(box_id=m.id, active_only=active))
+        return out
+    return await ls.list(box_id=target, active_only=active)
 
 
 @router.get("/{launch_id}", response_model=LaunchRecord)
