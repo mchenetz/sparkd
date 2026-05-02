@@ -11,6 +11,10 @@ export type Box = {
   use_agent: boolean;
   ssh_key_path?: string | null;
   repo_path: string;
+  /** IP this box advertises on the cluster IB/eth fabric. Used as the -n
+   * value for cluster launches; auto-detected from upstream's .env when
+   * capabilities are refreshed. Editable on Box Detail. */
+  cluster_ip?: string | null;
   tags: Record<string, string>;
   created_at: string;
 };

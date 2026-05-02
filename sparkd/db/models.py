@@ -22,6 +22,7 @@ class Box(Base):
     ssh_key_path: Mapped[str | None] = mapped_column(String, nullable=True)
     use_agent: Mapped[bool] = mapped_column(default=True)
     repo_path: Mapped[str] = mapped_column(default="~/spark-vllm-docker")
+    cluster_ip: Mapped[str | None] = mapped_column(String, nullable=True)
     tags_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     capabilities_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     capabilities_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

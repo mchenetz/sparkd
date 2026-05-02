@@ -60,29 +60,94 @@ async def test_launch_records_starting_state(env):
     assert not any("-n " in c and "./run-recipe.sh" in c for c in fake.received)
 
 
-async def test_cluster_launch_uses_dash_n_flag(env):
-    """A cluster target invokes ./run-recipe.sh with -n <head>,<worker>,... on the head box."""
+async def test_cluster_launch_falls_back_to_host_when_no_cluster_ip(env):
+    """If no cluster_ip is set on any member, build -n from box.host."""
     ls, box_svc, lib, fake, _ = env
     fake.set_default(stdout="12345\n", exit=0)
     head = await box_svc.create(
         BoxCreate(name="n1", host="10.0.0.1", user="u", tags={"cluster": "alpha"})
     )
-    worker1 = await box_svc.create(
+    await box_svc.create(
         BoxCreate(name="n2", host="10.0.0.2", user="u", tags={"cluster": "alpha"})
     )
-    worker2 = await box_svc.create(
+    await box_svc.create(
         BoxCreate(name="n3", host="10.0.0.3", user="u", tags={"cluster": "alpha"})
     )
     lib.save_recipe(RecipeSpec(name="r1", model="m"))
     rec = await ls.launch(LaunchCreate(recipe="r1", target="cluster:alpha"))
     assert rec.box_id == head.id
     assert rec.cluster_name == "alpha"
-    # Exactly one SSH command on the head; must contain -n <ips>.
     assert any(
         "./run-recipe.sh -n 10.0.0.1,10.0.0.2,10.0.0.3 r1" in c
         for c in fake.received
     ), f"expected -n flag in head command; got {fake.received}"
-    _ = (worker1, worker2)
+
+
+async def test_cluster_launch_uses_cluster_ip_when_set(env):
+    """When members have cluster_ip set, -n carries those IPs (not box.host).
+    This is what makes upstream launch-cluster.sh's LOCAL_IP string-match
+    succeed in real deployments where SSH lands on a Tailscale name but
+    LOCAL_IP is the IB-fabric address."""
+    ls, box_svc, lib, fake, _ = env
+    fake.set_default(stdout="12345\n", exit=0)
+    await box_svc.create(
+        BoxCreate(
+            name="n1",
+            host="gx10-0fb1.local",
+            user="u",
+            tags={"cluster": "alpha"},
+            cluster_ip="192.168.201.10",
+        )
+    )
+    await box_svc.create(
+        BoxCreate(
+            name="n2",
+            host="gx10-9ed5.local",
+            user="u",
+            tags={"cluster": "alpha"},
+            cluster_ip="192.168.201.11",
+        )
+    )
+    lib.save_recipe(RecipeSpec(name="r1", model="m"))
+    await ls.launch(LaunchCreate(recipe="r1", target="cluster:alpha"))
+    assert any(
+        "./run-recipe.sh -n 192.168.201.10,192.168.201.11 r1" in c
+        for c in fake.received
+    ), f"expected cluster_ip-based -n; got {fake.received}"
+    # Sanity: the SSH hostnames must NOT leak into the -n list.
+    assert not any("gx10-0fb1.local" in c and "-n " in c for c in fake.received)
+
+
+async def test_cluster_launch_mixed_cluster_ip_falls_back_per_member(env):
+    """If only some members have cluster_ip set, the others fall back to host
+    in the -n list. (Imperfect, but the alternative is refusing to launch,
+    which is worse for partial setups.)"""
+    ls, box_svc, lib, fake, _ = env
+    fake.set_default(stdout="12345\n", exit=0)
+    await box_svc.create(
+        BoxCreate(
+            name="n1",
+            host="gx10-0fb1.local",
+            user="u",
+            tags={"cluster": "alpha"},
+            cluster_ip="192.168.201.10",
+        )
+    )
+    await box_svc.create(
+        BoxCreate(
+            name="n2",
+            host="gx10-9ed5.local",
+            user="u",
+            tags={"cluster": "alpha"},
+            # no cluster_ip
+        )
+    )
+    lib.save_recipe(RecipeSpec(name="r1", model="m"))
+    await ls.launch(LaunchCreate(recipe="r1", target="cluster:alpha"))
+    assert any(
+        "./run-recipe.sh -n 192.168.201.10,gx10-9ed5.local r1" in c
+        for c in fake.received
+    ), f"expected mixed -n; got {fake.received}"
 
 
 async def test_launch_persists_log_path(env):

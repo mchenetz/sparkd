@@ -209,6 +209,19 @@ export default function BoxDetailPage() {
                 placeholder="alpha"
               />
             </Field>
+            <Field
+              label="cluster ip"
+              hint="LOCAL_IP from upstream's .env — used as the -n value for cluster launches. Auto-detected on capabilities refresh."
+            >
+              <input
+                className="mono"
+                value={draft.cluster_ip ?? ""}
+                onChange={(e) =>
+                  setField("cluster_ip", e.target.value || null)
+                }
+                placeholder="192.168.201.10"
+              />
+            </Field>
             <Field label="ssh auth">
               <label
                 style={{

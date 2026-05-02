@@ -23,6 +23,7 @@ def _to_spec(row: Box) -> BoxSpec:
         ssh_key_path=row.ssh_key_path,
         use_agent=row.use_agent,
         repo_path=row.repo_path,
+        cluster_ip=row.cluster_ip,
         tags=row.tags_json or {},
         created_at=row.created_at,
     )
@@ -65,6 +66,7 @@ class BoxService:
             row.ssh_key_path = body.ssh_key_path
             row.use_agent = body.use_agent
             row.repo_path = body.repo_path
+            row.cluster_ip = body.cluster_ip
             row.tags_json = body.tags
             await s.flush()
             return _to_spec(row)
@@ -80,6 +82,7 @@ class BoxService:
                 ssh_key_path=body.ssh_key_path,
                 use_agent=body.use_agent,
                 repo_path=body.repo_path,
+                cluster_ip=body.cluster_ip,
                 tags_json=body.tags,
             )
             s.add(row)
@@ -155,6 +158,20 @@ class BoxService:
             cuda = m.group(1).rstrip(",")
         ib = await self.pool.run(target, "ls /sys/class/infiniband 2>/dev/null || true")
         ib_iface = ib.stdout.strip().splitlines()[0] if ib.stdout.strip() else None
+
+        # Pull LOCAL_IP from upstream's spark-vllm-docker .env, if it's been
+        # set up (i.e. the user ran `launch-cluster.sh --setup` on this box).
+        # Upstream's launch-cluster.sh string-matches LOCAL_IP against the
+        # `--nodes` list at runtime, so for cluster launches we must pass
+        # this exact value rather than the SSH hostname. Only set when the
+        # field is currently empty — never clobber a user's manual entry.
+        env_ip = await self.pool.run(
+            target,
+            f"grep -E '^LOCAL_IP=' {row.repo_path}/.env 2>/dev/null "
+            "| cut -d= -f2 | tr -d '\"' | head -n1",
+        )
+        detected_ip: str | None = env_ip.stdout.strip() or None
+
         caps = BoxCapabilities(
             gpu_count=len(gpus),
             gpu_model=gpu_model,
@@ -167,4 +184,6 @@ class BoxService:
             row = await s.get(Box, box_id)
             row.capabilities_json = caps.model_dump(mode="json")
             row.capabilities_at = caps.captured_at
+            if detected_ip and not row.cluster_ip:
+                row.cluster_ip = detected_ip
         return caps

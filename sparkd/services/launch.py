@@ -90,7 +90,14 @@ class LaunchService:
             #   Upstream run-recipe.py invokes launch-cluster.sh with that
             #   list; launch-cluster.sh scps to workers and bootstraps Ray.
             if resolved.kind == "cluster":
-                node_csv = ",".join(b.host for b in resolved.members)
+                # Upstream launch-cluster.sh expects each node's LOCAL_IP
+                # (the IB/eth-fabric address) and string-matches its own
+                # against this list — hostnames don't match. Use cluster_ip
+                # when set (auto-detected from .env or manually entered);
+                # fall back to host so single-fabric setups keep working.
+                node_csv = ",".join(
+                    (b.cluster_ip or b.host) for b in resolved.members
+                )
                 run_cmd = f"./run-recipe.sh -n {node_csv} {body.recipe}"
             else:
                 run_cmd = f"./run-recipe.sh {body.recipe}"
