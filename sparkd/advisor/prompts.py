@@ -88,6 +88,19 @@ def _cluster_block(cluster: dict) -> str:
         "vLLM picks a default that often disagrees with Ray's binding "
         "and the worker GPU never registers in the placement group."
     )
+    lines.append("")
+    lines.append(
+        "PLACEMENT GROUP STRATEGY (critical for 1-GPU-per-node hardware): "
+        "set VLLM_DISTRIBUTED_EXECUTOR_CONFIG to use SPREAD instead of "
+        "vLLM's default PACK. PACK anchors the first GPU to the local "
+        "node and tries to fit the rest there — unsatisfiable on a "
+        "1-GPU-per-box Spark cluster when tp>1, and the local-node anchor "
+        "uses the route-IP (typically eth) which often disagrees with "
+        "Ray's registered IB IP, leaving the placement group timing out "
+        "forever. SPREAD distributes workers across nodes, which is what "
+        "every working multi-node spark-vllm-docker recipe sets:\n"
+        "  VLLM_DISTRIBUTED_EXECUTOR_CONFIG: '{\"placement_group_options\":{\"strategy\":\"SPREAD\"}}'"
+    )
     return "\n".join(lines)
 
 

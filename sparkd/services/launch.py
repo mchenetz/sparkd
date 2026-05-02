@@ -96,6 +96,22 @@ class LaunchService:
         warnings: list[str] = []
         if resolved.kind == "cluster":
             extra_env["VLLM_HOST_IP"] = "$LOCAL_IP"
+            # Force Ray placement-group strategy=SPREAD for multi-node.
+            # vLLM's default is PACK, which anchors the first GPU to the
+            # local node by its route-IP and tries to fit the rest there.
+            # On a 1-GPU/box Spark cluster with tp>1 this is unsatisfiable
+            # by construction (you can't pack 2 GPUs on a 1-GPU node) AND
+            # the route-IP anchor often points at the eth IP instead of
+            # the IB IP that Ray actually registered with — so the spec
+            # asks for `node:<eth-ip>` that no Ray node has, and the
+            # placement group times out forever. SPREAD distributes
+            # workers across nodes, which is what every working multi-node
+            # spark-vllm-docker recipe (e.g. minimax-m2.5) already sets.
+            # Recipe-set values are preserved (defaults-only merge in
+            # RecipeService.sync).
+            extra_env["VLLM_DISTRIBUTED_EXECUTOR_CONFIG"] = (
+                '{"placement_group_options":{"strategy":"SPREAD"}}'
+            )
             # Warn if any member is missing cluster_ip — we'll fall back to
             # host (SSH name), which upstream launch-cluster.sh's literal
             # LOCAL_IP string-match will reject. Diagnose this LOUDLY at

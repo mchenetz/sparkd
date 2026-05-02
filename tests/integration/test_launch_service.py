@@ -60,11 +60,16 @@ async def test_launch_records_starting_state(env):
     assert not any("-n " in c and "./run-recipe.sh" in c for c in fake.received)
 
 
-async def test_cluster_launch_injects_vllm_host_ip(env, monkeypatch):
-    """Cluster targets cause LaunchService to pass extra_env containing
-    VLLM_HOST_IP=$LOCAL_IP through to _sync_files. RecipeService.sync
-    then merges it into the recipe's env block before scping the YAML
-    to the head — but that merge is exercised in its own unit test below."""
+async def test_cluster_launch_injects_vllm_host_ip_and_spread_strategy(
+    env, monkeypatch
+):
+    """Cluster targets cause LaunchService to pass extra_env with both:
+    - VLLM_HOST_IP=$LOCAL_IP (per-node IB IP, resolved by upstream)
+    - VLLM_DISTRIBUTED_EXECUTOR_CONFIG forcing SPREAD placement strategy
+      (vLLM's PACK default is unsatisfiable on 1-GPU-per-box clusters)
+    RecipeService.sync merges these into the recipe's env block before
+    scping the YAML to the head; the merge logic itself is tested in
+    test_recipe_service.test_sync_extra_env_merges_into_yaml."""
     ls, box_svc, lib, fake, _ = env
     fake.set_default(stdout="12345\n", exit=0)
     captured: dict = {}
@@ -89,7 +94,12 @@ async def test_cluster_launch_injects_vllm_host_ip(env, monkeypatch):
     lib.save_recipe(RecipeSpec(name="r1", model="m"))
     await ls.launch(LaunchCreate(recipe="r1", target="cluster:alpha"))
 
-    assert captured["extra_env"] == {"VLLM_HOST_IP": "$LOCAL_IP"}
+    assert captured["extra_env"] == {
+        "VLLM_HOST_IP": "$LOCAL_IP",
+        "VLLM_DISTRIBUTED_EXECUTOR_CONFIG": (
+            '{"placement_group_options":{"strategy":"SPREAD"}}'
+        ),
+    }
 
 
 async def test_single_box_launch_does_not_inject_vllm_host_ip(env, monkeypatch):
