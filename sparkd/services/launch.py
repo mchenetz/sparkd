@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import shlex
 import uuid
 from datetime import datetime, timezone
 
+import httpx
 import yaml
 from sqlalchemy import select
 
@@ -22,6 +24,8 @@ from sparkd.services.library import LibraryService
 from sparkd.services.recipe import RecipeService
 from sparkd.services.targets import resolve_target
 from sparkd.ssh.pool import SSHPool, SSHTarget
+
+_log = logging.getLogger(__name__)
 
 
 def _to_record(row: Launch) -> LaunchRecord:
@@ -416,3 +420,93 @@ class LaunchService:
             if row is None:
                 raise NotFoundError("launch", launch_id)
             await s.delete(row)
+
+    # ---------- background reconciler ----------
+
+    async def reconcile_active(self) -> None:
+        """Probe each active launch and update its persisted state.
+
+        Idempotent and safe to run on a timer. Driven by a background task
+        in app.py so launch state stays in sync regardless of whether the
+        web UI is connected — this is what makes a launch transition from
+        `starting` to `healthy` once vLLM's OpenAI endpoint comes up.
+
+        Per launch:
+          - container missing  + state == healthy  → state = interrupted
+          - container present  + vLLM 200s         → state = healthy
+          - container present  + vLLM not 200      → state = starting
+        Other transitions (paused/failed/stopped) are user-driven and not
+        touched here.
+        """
+        async with session_scope() as s:
+            rows = (
+                await s.execute(
+                    select(Launch).where(
+                        Launch.state.in_(["starting", "healthy"])
+                    )
+                )
+            ).scalars().all()
+            items = [(r.id, r.state) for r in rows]
+        for lid, state in items:
+            try:
+                await self._reconcile_one(lid, state)
+            except Exception as exc:  # noqa: BLE001 — never break the loop
+                _log.debug("reconcile failed for %s: %s", lid, exc)
+
+    async def _reconcile_one(
+        self, launch_id: str, current_state: str
+    ) -> None:
+        # _resolve_container is best-effort: it tries the cached id, falls
+        # back to discovery via image. Returns cid=None when the container
+        # is gone (e.g. --rm cleanup after vLLM exit, or the user stopped
+        # it externally).
+        try:
+            target, _row, cid = await self._resolve_container(launch_id)
+        except NotFoundError:
+            return  # launch deleted between query and probe — fine
+
+        if cid is None:
+            # No container. If we previously saw it healthy, it crashed
+            # or got removed → mark interrupted. If we never saw it
+            # ("starting"), keep that state — upstream may still be
+            # downloading the model image / weights, which is slow on
+            # first launch.
+            if current_state == "healthy":
+                await self._set_state(
+                    launch_id, LaunchState.interrupted, stopped=True
+                )
+            return
+
+        # Container is up. Probe vLLM /health on the head's host.
+        async with session_scope() as s:
+            row = await s.get(Launch, launch_id)
+            if row is None:
+                return
+            box_row = await s.get(Box, row.box_id)
+            if box_row is None:
+                return
+            host = box_row.host
+        healthy = await self._probe_vllm(host)
+        if healthy and current_state == "starting":
+            await self._set_state(
+                launch_id, LaunchState.healthy, container_id=cid
+            )
+        elif not healthy and current_state == "healthy":
+            # Container is up but vLLM stopped responding. Could be a
+            # temporary blip (compaction, OOM, model reload) or the
+            # container's about to fall over. Drop back to "starting"
+            # so the UI shows it as recovering — if the container goes
+            # away entirely on the next tick we'll mark interrupted.
+            await self._set_state(
+                launch_id, LaunchState.starting, container_id=cid
+            )
+
+    async def _probe_vllm(self, host: str, port: int = 8000) -> bool:
+        """Single HTTP probe against vLLM's /health endpoint. Short timeout
+        so a slow box doesn't block the whole reconcile loop."""
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            try:
+                r = await client.get(f"http://{host}:{port}/health")
+                return r.status_code == 200
+            except (httpx.HTTPError, ValueError):
+                return False

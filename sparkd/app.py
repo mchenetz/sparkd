@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -36,13 +38,50 @@ from sparkd.services.upstream import UpstreamService
 from sparkd.ssh.pool import SSHPool
 
 
+_log = logging.getLogger(__name__)
+
+# How often the reconciler ticks. Short enough that the UI flips a launch
+# to "healthy" within a few seconds of vLLM coming up; long enough that
+# we're not hammering the box's docker daemon.
+RECONCILE_INTERVAL_SECONDS = 5.0
+
+
+async def _launch_reconcile_loop(app: FastAPI) -> None:
+    """Persistent state-reconciliation loop.
+
+    Runs throughout sparkd's lifetime, polling each box for the actual
+    state of its active launches and writing transitions back to the DB.
+    This is what flips a launch from `starting` to `healthy` once vLLM's
+    OpenAI endpoint is responsive.
+
+    The loop continues regardless of WebSocket clients, browser tabs, or
+    network blips — launches are persistent at the process level (vLLM
+    runs via nohup) and at the data level (state.db on disk); this loop
+    is what keeps those two layers in sync.
+    """
+    while True:
+        try:
+            await app.state.launches.reconcile_active()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — don't let the loop die
+            _log.exception("launch reconcile tick failed")
+        await asyncio.sleep(RECONCILE_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     sparkd_logging.configure()
     await init_engine(migrate=True)
+    reconcile_task = asyncio.create_task(_launch_reconcile_loop(app))
     try:
         yield
     finally:
+        reconcile_task.cancel()
+        try:
+            await reconcile_task
+        except asyncio.CancelledError:
+            pass
         await app.state.pool.close_all()
         await shutdown()
 
