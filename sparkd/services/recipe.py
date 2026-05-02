@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import yaml
+
 from sparkd.db.engine import session_scope
 from sparkd.db.models import Box
 from sparkd.schemas.recipe import RecipeDiff, RecipeSpec
@@ -44,11 +46,34 @@ class RecipeService:
                     )
         return issues
 
-    async def sync(self, name: str, box_id: str) -> None:
-        # Push the raw on-disk YAML so upstream-format recipes (with `defaults`,
-        # `command`, `container`, etc.) round-trip byte-identical and remain
-        # runnable by the box's ./run-recipe.sh.
+    async def sync(
+        self,
+        name: str,
+        box_id: str,
+        *,
+        extra_env: dict[str, str] | None = None,
+    ) -> None:
+        """Push the recipe YAML to the head box.
+
+        Normally we forward the raw on-disk YAML byte-identical so
+        upstream-format recipes (with `defaults`, `command`, `container`,
+        etc.) round-trip exactly and remain runnable by the box's
+        ./run-recipe.sh. When `extra_env` is provided (e.g. the cluster
+        launch path injecting `VLLM_HOST_IP=$LOCAL_IP`), we parse the YAML,
+        merge the entries into its `env:` block (without overwriting any
+        keys the recipe already sets), and re-serialize. Existing keys are
+        left alone — this is a defaults-only merge, never a clobber.
+        """
         yaml_text = self.library.load_recipe_text(name, box_id=box_id)
+        if extra_env:
+            data = yaml.safe_load(yaml_text) or {}
+            env = data.setdefault("env", {}) or {}
+            data["env"] = env
+            for k, v in extra_env.items():
+                env.setdefault(k, v)
+            yaml_text = yaml.safe_dump(
+                data, sort_keys=False, default_flow_style=False
+            )
         if not yaml_text.endswith("\n"):
             yaml_text += "\n"
         box = await self.boxes.get(box_id)

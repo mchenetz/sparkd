@@ -70,3 +70,50 @@ async def test_sync_writes_yaml_to_box_repo(svc):
     rs.library.save_recipe(RecipeSpec(name="r1", model="m", args={"--tp": "1"}))
     await rs.sync("r1", bs.id)
     assert any("recipes/r1.yaml" in c for c in fake.received)
+
+
+async def test_sync_extra_env_merges_into_yaml(svc):
+    """extra_env is appended to the recipe's env block (defaults-only merge);
+    new keys land, existing keys are not clobbered. Verified by reading the
+    heredoc payload that lands on the fake box."""
+    rs, box_svc, fake, _ = svc
+    bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
+    rs.library.save_recipe(
+        RecipeSpec(
+            name="r1",
+            model="m",
+            env={"NCCL_SOCKET_IFNAME": "ibp0"},
+        )
+    )
+    await rs.sync(
+        "r1",
+        bs.id,
+        extra_env={
+            "VLLM_HOST_IP": "$LOCAL_IP",
+            "NCCL_SOCKET_IFNAME": "should-not-overwrite",
+        },
+    )
+    blob = "\n".join(fake.received)
+    assert "VLLM_HOST_IP: $LOCAL_IP" in blob
+    # Existing key kept its original value — defaults-only merge.
+    assert "NCCL_SOCKET_IFNAME: ibp0" in blob
+    assert "should-not-overwrite" not in blob
+
+
+async def test_sync_without_extra_env_passes_yaml_byte_identical(svc):
+    """No extra_env → the on-disk YAML is shipped verbatim, preserving
+    upstream-format fields like `defaults`/`command`/`container`."""
+    rs, box_svc, fake, _ = svc
+    bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
+    raw = (
+        "name: r1\n"
+        "model: m\n"
+        "container: vllm-node\n"
+        "defaults: { port: 8000 }\n"
+        "command: vllm serve {model} --port {port}\n"
+    )
+    rs.library.save_recipe_raw("r1", raw)
+    await rs.sync("r1", bs.id)
+    blob = "\n".join(fake.received)
+    # The literal `command:` template survives — we did not re-serialize.
+    assert "vllm serve {model} --port {port}" in blob

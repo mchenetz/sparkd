@@ -70,9 +70,23 @@ def _cluster_block(cluster: dict) -> str:
         "and --pipeline-parallel-size to stage across nodes (or set "
         "--tensor-parallel-size to the cluster-wide GPU count if the "
         "interconnect supports it). Set --distributed-executor-backend=ray "
-        "and document any required env vars (NCCL_SOCKET_IFNAME pinned to "
-        "the IB iface, GLOO_SOCKET_IFNAME, RAY_ADDRESS) in `env`. Note in "
-        "the rationale how to start the Ray cluster (head node + workers)."
+        "and document any required env vars in `env`. Note in the "
+        "rationale how to start the Ray cluster (head node + workers)."
+    )
+    lines.append("")
+    lines.append(
+        "PER-NODE ENV CONVENTION (important): values in `env` are exported "
+        "by upstream's launch-cluster.sh on each node, where each node's "
+        "spark-vllm-docker .env has already set LOCAL_IP, IB_IF, and "
+        "ETH_IF. Reference these as bash variables ($LOCAL_IP, $IB_IF) "
+        "— NOT Python-style {LOCAL_IP} braces, which sparkd does not "
+        "substitute. Examples that resolve correctly per node:\n"
+        "  VLLM_HOST_IP: \"$LOCAL_IP\"           # per-node IB-fabric IP\n"
+        "  NCCL_SOCKET_IFNAME: \"$IB_IF\"        # per-node IB iface name\n"
+        "  GLOO_SOCKET_IFNAME: \"$IB_IF\"\n"
+        "Always include VLLM_HOST_IP for multi-node recipes; without it "
+        "vLLM picks a default that often disagrees with Ray's binding "
+        "and the worker GPU never registers in the placement group."
     )
     return "\n".join(lines)
 

@@ -60,6 +60,57 @@ async def test_launch_records_starting_state(env):
     assert not any("-n " in c and "./run-recipe.sh" in c for c in fake.received)
 
 
+async def test_cluster_launch_injects_vllm_host_ip(env, monkeypatch):
+    """Cluster targets cause LaunchService to pass extra_env containing
+    VLLM_HOST_IP=$LOCAL_IP through to _sync_files. RecipeService.sync
+    then merges it into the recipe's env block before scping the YAML
+    to the head — but that merge is exercised in its own unit test below."""
+    ls, box_svc, lib, fake, _ = env
+    fake.set_default(stdout="12345\n", exit=0)
+    captured: dict = {}
+
+    async def spy_sync_files(name, box_id, mods, *, extra_env=None):
+        captured["extra_env"] = extra_env
+
+    monkeypatch.setattr(ls, "_sync_files", spy_sync_files)
+
+    await box_svc.create(
+        BoxCreate(
+            name="n1", host="10.0.0.1", user="u",
+            tags={"cluster": "alpha"}, cluster_ip="192.168.201.10",
+        )
+    )
+    await box_svc.create(
+        BoxCreate(
+            name="n2", host="10.0.0.2", user="u",
+            tags={"cluster": "alpha"}, cluster_ip="192.168.201.11",
+        )
+    )
+    lib.save_recipe(RecipeSpec(name="r1", model="m"))
+    await ls.launch(LaunchCreate(recipe="r1", target="cluster:alpha"))
+
+    assert captured["extra_env"] == {"VLLM_HOST_IP": "$LOCAL_IP"}
+
+
+async def test_single_box_launch_does_not_inject_vllm_host_ip(env, monkeypatch):
+    """Single-box targets pass extra_env={} — no per-node injection,
+    because VLLM_HOST_IP isn't needed and would just add noise."""
+    ls, box_svc, lib, fake, _ = env
+    fake.set_default(stdout="12345\n", exit=0)
+    captured: dict = {}
+
+    async def spy_sync_files(name, box_id, mods, *, extra_env=None):
+        captured["extra_env"] = extra_env
+
+    monkeypatch.setattr(ls, "_sync_files", spy_sync_files)
+
+    bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
+    lib.save_recipe(RecipeSpec(name="r1", model="m"))
+    await ls.launch(LaunchCreate(recipe="r1", target=bs.id))
+
+    assert captured["extra_env"] == {}
+
+
 async def test_cluster_launch_falls_back_to_host_when_no_cluster_ip(env):
     """If no cluster_ip is set on any member, build -n from box.host."""
     ls, box_svc, lib, fake, _ = env

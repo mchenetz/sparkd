@@ -53,8 +53,15 @@ class LaunchService:
         self.recipes = recipes
         self.pool = pool
 
-    async def _sync_files(self, name: str, box_id: str, mods: list[str]) -> None:
-        await self.recipes.sync(name, box_id)
+    async def _sync_files(
+        self,
+        name: str,
+        box_id: str,
+        mods: list[str],
+        *,
+        extra_env: dict[str, str] | None = None,
+    ) -> None:
+        await self.recipes.sync(name, box_id, extra_env=extra_env)
 
     async def launch(self, body: LaunchCreate) -> LaunchRecord:
         resolved = await resolve_target(body.target, self.boxes)
@@ -77,7 +84,20 @@ class LaunchService:
         except Exception:  # noqa: BLE001
             raw_recipe = {}
         container_image = (raw_recipe.get("container") or "vllm-node").strip()
-        await self._sync_files(body.recipe, head_id, body.mods)
+        # For cluster targets we inject defaults that *must* differ per node.
+        # Upstream's per-node .env exports LOCAL_IP at --setup time, so the
+        # bash $LOCAL_IP token resolves to that node's IB-fabric address
+        # when the recipe's env entries are exported by launch-cluster.sh
+        # on each node. Without VLLM_HOST_IP set, vLLM picks its own
+        # default and Ray's placement group can't see the worker's GPU.
+        # `extra_env` is a defaults-only merge — a recipe that already
+        # sets VLLM_HOST_IP keeps its value.
+        extra_env: dict[str, str] = {}
+        if resolved.kind == "cluster":
+            extra_env["VLLM_HOST_IP"] = "$LOCAL_IP"
+        await self._sync_files(
+            body.recipe, head_id, body.mods, extra_env=extra_env
+        )
         launch_id = uuid.uuid4().hex[:12]
         log_path = f"~/.sparkd-launches/{launch_id}.log"
         async with session_scope() as s:
