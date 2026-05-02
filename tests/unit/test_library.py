@@ -48,3 +48,20 @@ def test_delete_recipe(lib):
     lib.delete_recipe("r1")
     with pytest.raises(NotFoundError):
         lib.load_recipe("r1")
+
+
+def test_save_recipe_includes_model_in_defaults_block(lib):
+    """Sparkd's renderer emits `defaults.model = spec.model` so that the
+    `command` template's `{model}` substitution resolves under upstream's
+    run-recipe.py. Without it, every cluster launch crashes with
+    `Missing parameter in recipe command: 'model'` because upstream's
+    str.format reads from `defaults`, not the top-level `model:` field."""
+    from sparkd import paths
+
+    lib.save_recipe(RecipeSpec(name="r1", model="org/the-model"))
+    yaml_text = (paths.library() / "recipes" / "r1.yaml").read_text()
+    assert "model: org/the-model" in yaml_text  # top-level
+    # defaults block must contain a `model:` line.
+    assert "defaults:" in yaml_text
+    defaults_section = yaml_text.split("defaults:", 1)[1].split("\n\n", 1)[0]
+    assert "model: org/the-model" in defaults_section

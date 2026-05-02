@@ -73,16 +73,48 @@ class RecipeService:
           discovery.
         """
         yaml_text = self.library.load_recipe_text(name, box_id=box_id)
+        data = yaml.safe_load(yaml_text) or {}
+        mutated = False
+
+        # Defensive: mirror top-level `model:` into `defaults.model` if the
+        # command references `{model}` and defaults doesn't already have it.
+        # Upstream's run-recipe.py uses `defaults` as the str.format namespace
+        # and treats the top-level `model:` field as metadata only — so a
+        # command with `{model}` and no `defaults.model` crashes with
+        # "Missing parameter in recipe command: 'model'". This unbreaks
+        # recipes saved by older sparkd versions whose renderer omitted the
+        # mirror, without requiring manual edits.
+        command = data.get("command") or ""
+        top_model = data.get("model")
+        if (
+            isinstance(command, str)
+            and "{model}" in command
+            and isinstance(top_model, str)
+            and top_model
+        ):
+            defaults = data.get("defaults") or {}
+            if isinstance(defaults, dict) and "model" not in defaults:
+                defaults["model"] = top_model
+                data["defaults"] = defaults
+                mutated = True
+
+        # Strip + merge env entries if requested.
         if extra_env or strip_env_keys:
-            data = yaml.safe_load(yaml_text) or {}
             env = data.setdefault("env", {}) or {}
             data["env"] = env
             if strip_env_keys:
+                before = len(env)
                 for k in strip_env_keys:
                     env.pop(k, None)
+                if len(env) != before:
+                    mutated = True
             if extra_env:
                 for k, v in extra_env.items():
-                    env.setdefault(k, v)
+                    if k not in env:
+                        env[k] = v
+                        mutated = True
+
+        if mutated:
             yaml_text = yaml.safe_dump(
                 data, sort_keys=False, default_flow_style=False
             )
