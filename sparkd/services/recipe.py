@@ -52,25 +52,37 @@ class RecipeService:
         box_id: str,
         *,
         extra_env: dict[str, str] | None = None,
+        strip_env_keys: list[str] | None = None,
     ) -> None:
         """Push the recipe YAML to the head box.
 
         Normally we forward the raw on-disk YAML byte-identical so
         upstream-format recipes (with `defaults`, `command`, `container`,
         etc.) round-trip exactly and remain runnable by the box's
-        ./run-recipe.sh. When `extra_env` is provided (e.g. the cluster
-        launch path injecting `VLLM_HOST_IP=$LOCAL_IP`), we parse the YAML,
-        merge the entries into its `env:` block (without overwriting any
-        keys the recipe already sets), and re-serialize. Existing keys are
-        left alone — this is a defaults-only merge, never a clobber.
+        ./run-recipe.sh.
+
+        Two transformations are supported, both applied to a parsed copy
+        of the YAML so the on-disk file is never mutated:
+
+        - `extra_env`: defaults-only merge into `env:`. Keys already
+          present in the recipe are left alone.
+        - `strip_env_keys`: remove these keys from `env:` entirely. Used
+          by the cluster launch path to drop entries that reference
+          `$LOCAL_IP` (a variable upstream does not set inside the
+          container) before they reach the box and break vLLM's host-IP
+          discovery.
         """
         yaml_text = self.library.load_recipe_text(name, box_id=box_id)
-        if extra_env:
+        if extra_env or strip_env_keys:
             data = yaml.safe_load(yaml_text) or {}
             env = data.setdefault("env", {}) or {}
             data["env"] = env
-            for k, v in extra_env.items():
-                env.setdefault(k, v)
+            if strip_env_keys:
+                for k in strip_env_keys:
+                    env.pop(k, None)
+            if extra_env:
+                for k, v in extra_env.items():
+                    env.setdefault(k, v)
             yaml_text = yaml.safe_dump(
                 data, sort_keys=False, default_flow_style=False
             )

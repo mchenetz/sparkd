@@ -100,6 +100,59 @@ async def test_sync_extra_env_merges_into_yaml(svc):
     assert "should-not-overwrite" not in blob
 
 
+async def test_sync_strip_env_keys_removes_entries(svc):
+    """strip_env_keys is the cluster-launch escape hatch — keys named in
+    the list are removed from the recipe's `env:` block before scping
+    to the box. Untouched keys survive."""
+    rs, box_svc, fake, _ = svc
+    bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
+    rs.library.save_recipe(
+        RecipeSpec(
+            name="r1",
+            model="m",
+            env={
+                "VLLM_HOST_IP": "$LOCAL_IP",        # to strip
+                "RAY_NODE_IP_ADDRESS": "$LOCAL_IP", # to strip
+                "VLLM_USE_DEEP_GEMM": "0",          # to keep
+            },
+        )
+    )
+    await rs.sync(
+        "r1",
+        bs.id,
+        strip_env_keys=["VLLM_HOST_IP", "RAY_NODE_IP_ADDRESS"],
+    )
+    blob = "\n".join(fake.received)
+    assert "VLLM_HOST_IP" not in blob
+    assert "RAY_NODE_IP_ADDRESS" not in blob
+    # The model-specific key survives.
+    assert "VLLM_USE_DEEP_GEMM: " in blob
+
+
+async def test_sync_strip_env_keys_combined_with_extra_env(svc):
+    """strip and merge can co-occur in one sync call. Strip happens first,
+    then merge — the order makes 'remove this then default this' an
+    explicit option, not an accident."""
+    rs, box_svc, fake, _ = svc
+    bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
+    rs.library.save_recipe(
+        RecipeSpec(
+            name="r1",
+            model="m",
+            env={"VLLM_HOST_IP": "$LOCAL_IP"},
+        )
+    )
+    await rs.sync(
+        "r1",
+        bs.id,
+        strip_env_keys=["VLLM_HOST_IP"],
+        extra_env={"OMP_NUM_THREADS": "4"},
+    )
+    blob = "\n".join(fake.received)
+    assert "VLLM_HOST_IP" not in blob
+    assert "OMP_NUM_THREADS: " in blob
+
+
 async def test_sync_without_extra_env_passes_yaml_byte_identical(svc):
     """No extra_env → the on-disk YAML is shipped verbatim, preserving
     upstream-format fields like `defaults`/`command`/`container`."""

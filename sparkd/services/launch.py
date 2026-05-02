@@ -60,8 +60,11 @@ class LaunchService:
         mods: list[str],
         *,
         extra_env: dict[str, str] | None = None,
+        strip_env_keys: list[str] | None = None,
     ) -> None:
-        await self.recipes.sync(name, box_id, extra_env=extra_env)
+        await self.recipes.sync(
+            name, box_id, extra_env=extra_env, strip_env_keys=strip_env_keys
+        )
 
     async def launch(self, body: LaunchCreate) -> LaunchRecord:
         resolved = await resolve_target(body.target, self.boxes)
@@ -84,34 +87,34 @@ class LaunchService:
         except Exception:  # noqa: BLE001
             raw_recipe = {}
         container_image = (raw_recipe.get("container") or "vllm-node").strip()
-        # For cluster targets we inject defaults that *must* differ per node.
-        # Upstream's per-node .env exports LOCAL_IP at --setup time, so the
-        # bash $LOCAL_IP token resolves to that node's IB-fabric address
-        # when the recipe's env entries are exported by launch-cluster.sh
-        # on each node. Without VLLM_HOST_IP set, vLLM picks its own
-        # default and Ray's placement group can't see the worker's GPU.
-        # `extra_env` is a defaults-only merge — a recipe that already
-        # sets VLLM_HOST_IP keeps its value.
-        extra_env: dict[str, str] = {}
         warnings: list[str] = []
+        # At cluster sync time, strip env entries that reference $LOCAL_IP.
+        # Why: upstream `run-recipe.py` writes the recipe's `env:` block as
+        # `export KEY="VALUE"` lines into a bash script run inside each
+        # container. Inside the container, $LOCAL_IP is NOT defined —
+        # upstream's `launch-cluster.sh` sets per-node `-e VLLM_HOST_IP=…`,
+        # `-e RAY_NODE_IP_ADDRESS=…`, etc., but never sets `LOCAL_IP`. So
+        # `export VLLM_HOST_IP="$LOCAL_IP"` expands to `VLLM_HOST_IP=""` and
+        # blows away the correctly-set value, making vLLM auto-detect the
+        # eth IP and breaking Ray placement. (Past sparkd versions injected
+        # this themselves; this strip undoes that damage even on existing
+        # recipes the user already has on disk.)
+        strip_env_keys: list[str] = []
         if resolved.kind == "cluster":
-            extra_env["VLLM_HOST_IP"] = "$LOCAL_IP"
-            # Force Ray placement-group strategy=SPREAD for multi-node.
-            # vLLM's default is PACK, which anchors the first GPU to the
-            # local node by its route-IP and tries to fit the rest there.
-            # On a 1-GPU/box Spark cluster with tp>1 this is unsatisfiable
-            # by construction (you can't pack 2 GPUs on a 1-GPU node) AND
-            # the route-IP anchor often points at the eth IP instead of
-            # the IB IP that Ray actually registered with — so the spec
-            # asks for `node:<eth-ip>` that no Ray node has, and the
-            # placement group times out forever. SPREAD distributes
-            # workers across nodes, which is what every working multi-node
-            # spark-vllm-docker recipe (e.g. minimax-m2.5) already sets.
-            # Recipe-set values are preserved (defaults-only merge in
-            # RecipeService.sync).
-            extra_env["VLLM_DISTRIBUTED_EXECUTOR_CONFIG"] = (
-                '{"placement_group_options":{"strategy":"SPREAD"}}'
-            )
+            recipe_env = raw_recipe.get("env") or {}
+            if isinstance(recipe_env, dict):
+                for k, v in recipe_env.items():
+                    if isinstance(v, str) and "$LOCAL_IP" in v:
+                        strip_env_keys.append(k)
+            if strip_env_keys:
+                warnings.append(
+                    "Stripped env keys that reference $LOCAL_IP "
+                    f"({', '.join(strip_env_keys)}) — that variable is "
+                    "not defined inside the container, so the export "
+                    "would blank out the value. Upstream's "
+                    "launch-cluster.sh sets VLLM_HOST_IP/RAY_*/NCCL_* "
+                    "per node via docker -e; recipes should not override."
+                )
             # Warn if any member is missing cluster_ip — we'll fall back to
             # host (SSH name), which upstream launch-cluster.sh's literal
             # LOCAL_IP string-match will reject. Diagnose this LOUDLY at
@@ -131,7 +134,7 @@ class LaunchService:
                     f"Box Detail."
                 )
         await self._sync_files(
-            body.recipe, head_id, body.mods, extra_env=extra_env
+            body.recipe, head_id, body.mods, strip_env_keys=strip_env_keys
         )
         launch_id = uuid.uuid4().hex[:12]
         log_path = f"~/.sparkd-launches/{launch_id}.log"
