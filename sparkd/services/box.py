@@ -159,18 +159,29 @@ class BoxService:
         ib = await self.pool.run(target, "ls /sys/class/infiniband 2>/dev/null || true")
         ib_iface = ib.stdout.strip().splitlines()[0] if ib.stdout.strip() else None
 
-        # Pull LOCAL_IP from upstream's spark-vllm-docker .env, if it's been
-        # set up (i.e. the user ran `launch-cluster.sh --setup` on this box).
-        # Upstream's launch-cluster.sh string-matches LOCAL_IP against the
-        # `--nodes` list at runtime, so for cluster launches we must pass
-        # this exact value rather than the SSH hostname. Only set when the
-        # field is currently empty — never clobber a user's manual entry.
+        # Pull a usable cluster IP for this box, in priority order:
+        #   1. LOCAL_IP from upstream's spark-vllm-docker .env (canonical —
+        #      set when the user ran `launch-cluster.sh --setup`)
+        #   2. DOTENV_LOCAL_IP from the same file (some upstream versions
+        #      use this prefixed name)
+        #   3. The box's primary route IP (`hostname -I` first token).
+        #      May be wrong on multi-NIC boxes — the user can override on
+        #      Box Detail. Better than leaving cluster_ip empty and
+        #      silently falling back to the SSH hostname for `-n`, which
+        #      breaks upstream launch-cluster.sh's LOCAL_IP comparison.
+        # Only set when the field is currently empty — never clobber a
+        # user's manual entry.
         env_ip = await self.pool.run(
             target,
-            f"grep -E '^LOCAL_IP=' {row.repo_path}/.env 2>/dev/null "
-            "| cut -d= -f2 | tr -d '\"' | head -n1",
+            f"grep -E '^(DOTENV_)?LOCAL_IP=' {row.repo_path}/.env "
+            "2>/dev/null | head -n1 | cut -d= -f2 | tr -d '\"'",
         )
         detected_ip: str | None = env_ip.stdout.strip() or None
+        if not detected_ip:
+            fallback = await self.pool.run(
+                target, "hostname -I 2>/dev/null | awk '{print $1}'"
+            )
+            detected_ip = fallback.stdout.strip() or None
 
         caps = BoxCapabilities(
             gpu_count=len(gpus),

@@ -93,8 +93,27 @@ class LaunchService:
         # `extra_env` is a defaults-only merge — a recipe that already
         # sets VLLM_HOST_IP keeps its value.
         extra_env: dict[str, str] = {}
+        warnings: list[str] = []
         if resolved.kind == "cluster":
             extra_env["VLLM_HOST_IP"] = "$LOCAL_IP"
+            # Warn if any member is missing cluster_ip — we'll fall back to
+            # host (SSH name), which upstream launch-cluster.sh's literal
+            # LOCAL_IP string-match will reject. Diagnose this LOUDLY at
+            # the top of the launch log so the user doesn't spend an hour
+            # chasing a Ray placement-group timeout that's actually a
+            # one-field configuration gap.
+            missing = [m for m in resolved.members if not m.cluster_ip]
+            if missing:
+                names = ", ".join(m.name for m in missing)
+                warnings.append(
+                    f"cluster_ip is not set on member(s): {names}. "
+                    f"Falling back to SSH hostname in -n; upstream "
+                    f"launch-cluster.sh's LOCAL_IP string-match will "
+                    f"likely fail and the worker GPU will not register "
+                    f"in the Ray placement group. Refresh capabilities "
+                    f"on each member, or set cluster_ip manually on "
+                    f"Box Detail."
+                )
         await self._sync_files(
             body.recipe, head_id, body.mods, extra_env=extra_env
         )
@@ -132,11 +151,32 @@ class LaunchService:
             # Without this, input() raises EOFError because we redirect
             # stdin from /dev/null and the launch fails before docker even
             # starts.
+            # Sparkd-side log header — written before run-recipe.sh kicks
+            # off so it always opens the launch log. Includes any warnings
+            # so users see them in LiveLog rather than silently hitting a
+            # cluster mis-config 90 seconds later.
+            header_lines = [
+                f"=== sparkd launch {launch_id} ===",
+                f"recipe: {body.recipe}",
+                f"target:  {body.target}",
+            ]
+            if resolved.kind == "cluster":
+                node_summary = ",".join(
+                    (m.cluster_ip or f"{m.host}(no cluster_ip)")
+                    for m in resolved.members
+                )
+                header_lines.append(
+                    f"cluster: {resolved.cluster_name} "
+                    f"({len(resolved.members)} nodes: {node_summary})"
+                )
+            header_lines.extend(f"WARNING: {w}" for w in warnings)
+            header = "\n".join(header_lines) + "\n\n"
             cmd = (
                 f"mkdir -p ~/.sparkd-launches && "
+                f"printf %s {shlex.quote(header)} > {log_path} && "
                 f"( nohup bash -lc 'cd {box_row.repo_path} "
                 f"&& yes | {run_cmd}' "
-                f"> {log_path} 2>&1 < /dev/null & ) ; echo $!"
+                f">> {log_path} 2>&1 < /dev/null & ) ; echo $!"
             )
         result = await self.pool.run(target, cmd)
         if result.exit_status not in (0, None):

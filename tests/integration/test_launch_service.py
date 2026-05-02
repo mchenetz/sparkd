@@ -134,6 +134,57 @@ async def test_cluster_launch_falls_back_to_host_when_no_cluster_ip(env):
     ), f"expected -n flag in head command; got {fake.received}"
 
 
+async def test_cluster_launch_emits_warning_when_member_lacks_cluster_ip(env):
+    """When some cluster members have no cluster_ip, the launch log should
+    open with a sparkd WARNING calling out the missing field — visible in
+    LiveLog before run-recipe.sh produces its first byte."""
+    ls, box_svc, lib, fake, _ = env
+    fake.set_default(stdout="12345\n", exit=0)
+    await box_svc.create(
+        BoxCreate(
+            name="head", host="gx10-0fb1.local", user="u",
+            tags={"cluster": "alpha"}, cluster_ip="192.168.201.10",
+        )
+    )
+    await box_svc.create(
+        BoxCreate(
+            name="worker", host="gx10-9ed5.local", user="u",
+            tags={"cluster": "alpha"},  # no cluster_ip
+        )
+    )
+    lib.save_recipe(RecipeSpec(name="r1", model="m"))
+    await ls.launch(LaunchCreate(recipe="r1", target="cluster:alpha"))
+    blob = "\n".join(fake.received)
+    # Header is pre-written via printf > log_path with a sparkd-side header.
+    assert "=== sparkd launch" in blob, "expected sparkd header in cmd"
+    assert "WARNING: cluster_ip is not set on member(s): worker" in blob
+    # Cluster summary should call out the offending node.
+    assert "gx10-9ed5.local(no cluster_ip)" in blob
+
+
+async def test_cluster_launch_no_warning_when_all_members_have_cluster_ip(env):
+    """Every member set → no WARNING in the header. Just the launch summary."""
+    ls, box_svc, lib, fake, _ = env
+    fake.set_default(stdout="12345\n", exit=0)
+    await box_svc.create(
+        BoxCreate(
+            name="head", host="gx10-0fb1.local", user="u",
+            tags={"cluster": "alpha"}, cluster_ip="192.168.201.10",
+        )
+    )
+    await box_svc.create(
+        BoxCreate(
+            name="worker", host="gx10-9ed5.local", user="u",
+            tags={"cluster": "alpha"}, cluster_ip="192.168.201.11",
+        )
+    )
+    lib.save_recipe(RecipeSpec(name="r1", model="m"))
+    await ls.launch(LaunchCreate(recipe="r1", target="cluster:alpha"))
+    blob = "\n".join(fake.received)
+    assert "=== sparkd launch" in blob
+    assert "WARNING:" not in blob
+
+
 async def test_cluster_launch_uses_cluster_ip_when_set(env):
     """When members have cluster_ip set, -n carries those IPs (not box.host).
     This is what makes upstream launch-cluster.sh's LOCAL_IP string-match
