@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 
+from sparkd.advisor.tool_calls import render_tool_call_block
 from sparkd.schemas.advisor import ModDraft, RecipeDraft
 from sparkd.schemas.box import BoxCapabilities
 from sparkd.schemas.hf import HFModelInfo
@@ -55,6 +56,7 @@ def _model_block(info: HFModelInfo) -> str:
         f"- Context length: {info.context_length}\n"
         f"- Supported dtypes: {', '.join(info.supported_dtypes) or 'unknown'}\n"
         f"- License: {info.license or 'unknown'}\n"
+        f"- {render_tool_call_block(info.id)}\n"
     )
 
 
@@ -162,6 +164,7 @@ def build_optimize_prompt(
         f"args: {json.dumps(recipe.args)}\nenv: {json.dumps(recipe.env)}\n"
         f"```\n",
         _caps_block(caps),
+        f"\nModel fact: {render_tool_call_block(recipe.model)}",
     ]
     if cluster:
         parts.append("")
@@ -172,7 +175,10 @@ def build_optimize_prompt(
     parts.append(
         "Return a revised RecipeDraft (same JSON shape as recipe creation). "
         "Keep the same `name` and `model`. Explain each change in "
-        "`rationale`."
+        "`rationale`. Reconcile the recipe's tool-call args with the "
+        "Model fact above — if support is detected and args don't have "
+        "both --tool-call-parser and --enable-auto-tool-choice, add "
+        "them; if NOT detected, remove them."
     )
     if cluster:
         total = cluster.get("total_gpus", 0)

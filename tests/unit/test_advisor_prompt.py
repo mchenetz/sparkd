@@ -104,6 +104,51 @@ def test_optimize_prompt_without_cluster_unchanged_behavior():
     assert "MUST equal" not in p
 
 
+def test_recipe_prompt_embeds_tool_call_fact_for_supported_model():
+    """When the model id matches a curated parser pattern, the recipe
+    prompt embeds it as a concrete fact — the advisor doesn't have to
+    guess. Same approach prevents the "set parser without enable-auto"
+    failure mode that triggered this whole feature."""
+    qwen_info = HFModelInfo(
+        id="Qwen/Qwen3.5-122B-A10B-FP8",
+        architecture="Qwen3MoeForCausalLM",
+        parameters_b=122.0,
+        context_length=262144,
+    )
+    p = build_recipe_prompt(qwen_info, _caps())
+    assert "Tool calling: SUPPORTED" in p
+    assert "qwen3_coder" in p
+    assert "--enable-auto-tool-choice" in p
+
+
+def test_recipe_prompt_embeds_no_tool_call_for_base_model():
+    base_info = HFModelInfo(
+        id="Qwen/Qwen3-8B-Base",
+        architecture="Qwen3ForCausalLM",
+        parameters_b=8.0,
+        context_length=32768,
+    )
+    p = build_recipe_prompt(base_info, _caps())
+    assert "Tool calling: NOT detected" in p
+    assert "Do NOT set" in p
+
+
+def test_optimize_prompt_embeds_tool_call_fact():
+    """The optimize prompt also gets the tool-call fact, so when a user
+    asks to optimize a recipe whose tool-call config doesn't match the
+    model's actual support, Claude sees ground truth and can fix it."""
+    r = RecipeSpec(
+        name="r",
+        model="meta-llama/Llama-3.1-70B-Instruct",
+        args={"--tp": "1"},
+    )
+    p = build_optimize_prompt(r, _caps(), goals=["throughput"])
+    assert "Tool calling: SUPPORTED" in p
+    assert "llama3_json" in p
+    # The reconcile instruction tells Claude to fix mismatches.
+    assert "Reconcile the recipe's tool-call args" in p
+
+
 def test_mod_prompt_carries_error_log():
     p = build_mod_prompt(error_log="ImportError: foo", model_id="x")
     assert "ImportError: foo" in p
