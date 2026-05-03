@@ -73,3 +73,72 @@ async def test_run_returns_none_exit_status_for_signal(fake_box, pool):
     res = await pool.run(target, "succeed")
     # exit_status is now an int (0), preserved exactly.
     assert res.exit_status == 0
+
+
+async def test_run_evicts_dead_connection_and_reconnects(
+    fake_box, pool, monkeypatch
+):
+    """After a laptop sleep, the cached SSH connection's local socket
+    looks alive (`is_closed()` returns False) but the actual write fails
+    with `asyncssh.Error: SSH connection closed`. The pool should evict
+    that dead entry and retry once on a fresh connection — without the
+    user having to click again."""
+    box, port = fake_box
+    box.reply("docker stop abc", stdout="abc\n")
+    target = SSHTarget(
+        host="127.0.0.1", port=port, user="x", use_agent=False, password="y"
+    )
+    # Prime the pool with a real working connection.
+    await pool.run(target, "docker stop abc")
+    assert pool._conn_count(target) == 1
+
+    # Replace the cached connection's `run` with a one-shot raise. The
+    # second call (after the pool evicts and reconnects) succeeds.
+    cached = pool._conns[target.key()]
+    calls = {"n": 0}
+
+    async def flaky(*_args, **_kwargs):
+        calls["n"] += 1
+        raise asyncssh.Error(code=0, reason="SSH connection closed")
+
+    monkeypatch.setattr(cached, "run", flaky)
+
+    # The retry happens transparently — the user sees a successful result
+    # because the second attempt acquired a fresh connection.
+    result = await pool.run(target, "docker stop abc")
+    assert result.stdout.strip() == "abc"
+    assert calls["n"] == 1  # the flaky cached conn was hit exactly once
+    # And the pool has a fresh connection now.
+    assert pool._conn_count(target) == 1
+
+
+async def test_run_surfaces_error_after_retry_also_fails(
+    fake_box, pool, monkeypatch
+):
+    """If the second attempt also fails (box genuinely offline), surface
+    UpstreamError. Don't loop forever or hide the failure."""
+    from sparkd.errors import UpstreamError
+
+    box, port = fake_box
+    box.reply("any", stdout="ok\n")
+    target = SSHTarget(
+        host="127.0.0.1", port=port, user="x", use_agent=False, password="y"
+    )
+    await pool.run(target, "any")  # prime the pool
+
+    # Wrap _get so every connection it returns has a poisoned `run`.
+    real_get = pool._get.__func__
+
+    async def get_with_poison(self, t):
+        conn = await real_get(self, t)
+
+        async def always_fail(*_a, **_k):
+            raise asyncssh.Error(code=0, reason="SSH connection closed")
+
+        monkeypatch.setattr(conn, "run", always_fail)
+        return conn
+
+    monkeypatch.setattr(SSHPool, "_get", get_with_poison)
+
+    with pytest.raises(UpstreamError, match="ssh exec failed after retry"):
+        await pool.run(target, "any")
