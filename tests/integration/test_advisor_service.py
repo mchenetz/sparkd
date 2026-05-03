@@ -30,7 +30,7 @@ class FakePort:
         async for c in self._yield(history):
             yield c
 
-    async def stream_optimize(self, recipe, caps, goals, history):
+    async def stream_optimize(self, recipe, caps, goals, history, *, cluster=None):
         async for c in self._yield(history):
             yield c
 

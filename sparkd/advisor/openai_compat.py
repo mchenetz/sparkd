@@ -88,9 +88,13 @@ class OpenAICompatAdapter:
         caps: BoxCapabilities,
         goals: list[str],
         history: list[AdvisorMessage],
+        *,
+        cluster: dict | None = None,
     ) -> AsyncIterator[AdvisorChunk]:
         async for c in self._stream(
-            SYSTEM_PROMPT, build_optimize_prompt(recipe, caps, goals=goals), history
+            SYSTEM_PROMPT,
+            build_optimize_prompt(recipe, caps, goals=goals, cluster=cluster),
+            history,
         ):
             yield c
 

@@ -163,13 +163,33 @@ class AdvisorService:
         caps: BoxCapabilities,
         goals: list[str],
         user_msg: str | None = None,
+        cluster: dict | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         port = self._require_port()
         history = await self._load_history(session_id)
-        msg = user_msg or f"Optimize recipe {recipe.name} for goals: {', '.join(goals)}"
+        if cluster:
+            total = cluster.get("total_gpus", 0)
+            msg = (
+                user_msg
+                or f"Optimize recipe {recipe.name} for cluster "
+                f"{cluster.get('name', '?')} ({total} total GPUs across "
+                f"{len(cluster.get('nodes') or [])} nodes), "
+                f"goals: {', '.join(goals)}. The revised recipe's "
+                f"--tensor-parallel-size × --pipeline-parallel-size "
+                f"must equal {total}."
+            )
+        else:
+            msg = (
+                user_msg
+                or f"Optimize recipe {recipe.name} for goals: {', '.join(goals)}"
+            )
         try:
             chunks = port.stream_optimize(
-                recipe=recipe, caps=caps, goals=goals, history=history
+                recipe=recipe,
+                caps=caps,
+                goals=goals,
+                history=history,
+                cluster=cluster,
             )
         except Exception as exc:  # noqa: BLE001
             raise UpstreamError(f"advisor: {exc}") from exc

@@ -30,7 +30,8 @@ class CapturingPort:
         async for c in self._yield():
             yield c
 
-    async def stream_optimize(self, recipe, caps, goals, history):
+    async def stream_optimize(self, recipe, caps, goals, history, *, cluster=None):
+        self.last_cluster = cluster
         async for c in self._yield():
             yield c
 
@@ -139,6 +140,36 @@ async def test_advisor_recipe_with_cluster_target_passes_topology(client):
     assert len(port.last_cluster["nodes"]) == 3
     assert port.last_cluster["total_gpus"] == 3
     assert port.last_cluster["total_vram_gb"] == 384  # 3 nodes × 1 GPU × 128 GB
+
+
+async def test_advisor_optimize_with_cluster_target_passes_topology(client):
+    """The Optimize flow must also see the cluster topology. Without this,
+    a user clicking Optimize on a recipe while a cluster is selected would
+    silently get advice sized for a single box — exactly what happens
+    without cluster propagation through the optimize path."""
+    c, _app, port = client
+    await _make_box(c, "n1", "10.0.0.1", cluster="alpha")
+    await _make_box(c, "n2", "10.0.0.2", cluster="alpha")
+    # Save a recipe for the optimize path to load.
+    await c.post("/api/recipes", json={"name": "r1", "model": "org/m"})
+    sid = (
+        await c.post(
+            "/api/advisor/sessions",
+            json={
+                "kind": "optimize",
+                "target_box_id": "cluster:alpha",
+                "target_recipe_name": "r1",
+            },
+        )
+    ).json()["id"]
+    r = await c.post(
+        f"/api/advisor/sessions/{sid}/optimize",
+        json={"goals": ["throughput"]},
+    )
+    assert r.status_code == 200
+    assert port.last_cluster is not None
+    assert port.last_cluster["name"] == "alpha"
+    assert port.last_cluster["total_gpus"] == 2
 
 
 async def test_advisor_with_single_box_target_no_cluster_context(client):

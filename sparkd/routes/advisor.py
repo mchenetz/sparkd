@@ -172,6 +172,7 @@ async def optimize_recipe(
         raise ValidationError("session needs target_recipe_name")
     recipe = lib.load_recipe(sess.target_recipe_name, box_id=sess.target_box_id)
     caps = await _resolve_caps(sess.target_box_id, boxes)
+    cluster = await _resolve_cluster(sess.target_box_id, boxes)
     draft = None
     deltas: list[str] = []
     async for ev in svc.optimize_recipe(
@@ -180,6 +181,7 @@ async def optimize_recipe(
         caps=caps,
         goals=body.goals,
         user_msg=body.user_msg,
+        cluster=cluster,
     ):
         if ev["type"] == "delta":
             deltas.append(ev["text"])

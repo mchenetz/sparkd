@@ -42,6 +42,8 @@ class AdvisorPort(Protocol):
         caps: BoxCapabilities,
         goals: list[str],
         history: list[AdvisorMessage],
+        *,
+        cluster: dict | None = ...,
     ) -> AsyncIterator[AdvisorChunk]: ...
 
     def stream_mod(
@@ -112,8 +114,12 @@ class AnthropicAdapter:
         caps: BoxCapabilities,
         goals: list[str],
         history: list[AdvisorMessage],
+        *,
+        cluster: dict | None = None,
     ) -> AsyncIterator[AdvisorChunk]:
-        prompt = build_optimize_prompt(recipe, caps, goals=goals)
+        prompt = build_optimize_prompt(
+            recipe, caps, goals=goals, cluster=cluster
+        )
         async for c in self._stream(SYSTEM_PROMPT, prompt, history):
             yield c
 

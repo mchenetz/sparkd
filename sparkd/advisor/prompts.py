@@ -49,28 +49,54 @@ def _model_block(info: HFModelInfo) -> str:
 
 
 def _cluster_block(cluster: dict) -> str:
+    nodes = cluster.get("nodes") or []
+    n_nodes = len(nodes)
+    total_gpus = cluster.get("total_gpus", 0)
+    # Per-node GPU count, assuming homogeneous (the common case on a Spark
+    # fleet). If heterogeneous, the model can read the per-node breakdown
+    # below and decide; for our DGX Spark target every node has 1 GPU.
+    gpus_per_node = (
+        nodes[0].get("gpu_count", 0) if nodes and n_nodes > 0 else 0
+    )
+
     lines = [
         "Multi-node cluster topology:",
         f"- Cluster: {cluster.get('name', 'unknown')}",
-        f"- Nodes: {len(cluster.get('nodes') or [])}",
+        f"- Nodes: {n_nodes}",
     ]
-    for n in cluster.get("nodes") or []:
+    for n in nodes:
         lines.append(
             f"  · {n.get('name', '?')}: {n.get('gpu_count', 0)}× "
             f"{n.get('gpu_model') or 'unknown'}, "
             f"{n.get('vram_gb', 0)} GB VRAM, "
             f"IB={n.get('ib') or 'none'}"
         )
-    lines.append(f"- Total GPUs across cluster: {cluster.get('total_gpus', 0)}")
+    lines.append(f"- Total GPUs across cluster: {total_gpus}")
     lines.append(f"- Aggregate VRAM: {cluster.get('total_vram_gb', 0)} GB")
     lines.append("")
     lines.append(
-        "This deployment spans MULTIPLE NODES. Recommend a topology that "
-        "uses --tensor-parallel-size to shard across the GPUs on each node "
-        "and --pipeline-parallel-size to stage across nodes (or set "
-        "--tensor-parallel-size to the cluster-wide GPU count if the "
-        "interconnect supports it). Set --distributed-executor-backend=ray. "
-        "Note in the rationale how to start the Ray cluster (head + workers)."
+        f"PARALLELISM REQUIREMENT (binding): "
+        f"--tensor-parallel-size × --pipeline-parallel-size MUST equal "
+        f"the cluster's total GPU count, which is **{total_gpus}** "
+        f"(= {n_nodes} nodes × {gpus_per_node} GPU/node). "
+        "Anything less than total_gpus leaves GPUs idle and Ray will "
+        "either reject the placement or refuse to schedule workers; "
+        "anything more is unsatisfiable."
+    )
+    lines.append("")
+    lines.append(
+        f"PREFERRED LAYOUT: tp = {total_gpus}, pp = 1 — distribute "
+        f"the model's tensor shards across all {total_gpus} GPUs in one "
+        "pipeline stage. The Spark fleet has IB/RoCE between nodes which "
+        "supports cross-node tensor-parallel comfortably. Only fall back "
+        f"to pp = {n_nodes} (and tp = {gpus_per_node}) when a model's "
+        "intermediate-state size genuinely requires the extra "
+        "memory-per-stage budget."
+    )
+    lines.append("")
+    lines.append(
+        "Set --distributed-executor-backend=ray. Note in the rationale "
+        "how to start the Ray cluster (head + workers)."
     )
     lines.append("")
     lines.append(
@@ -114,18 +140,41 @@ def build_recipe_prompt(
 
 
 def build_optimize_prompt(
-    recipe: RecipeSpec, caps: BoxCapabilities, *, goals: list[str]
+    recipe: RecipeSpec,
+    caps: BoxCapabilities,
+    *,
+    goals: list[str],
+    cluster: dict | None = None,
 ) -> str:
-    return (
+    parts = [
         f"Existing recipe:\n```yaml\n"
         f"name: {recipe.name}\nmodel: {recipe.model}\n"
         f"args: {json.dumps(recipe.args)}\nenv: {json.dumps(recipe.env)}\n"
-        f"```\n\n"
-        + _caps_block(caps)
-        + f"\nGoals (in priority order): {', '.join(goals)}\n\n"
+        f"```\n",
+        _caps_block(caps),
+    ]
+    if cluster:
+        parts.append("")
+        parts.append(_cluster_block(cluster))
+    parts.append("")
+    parts.append(f"Goals (in priority order): {', '.join(goals)}")
+    parts.append("")
+    parts.append(
         "Return a revised RecipeDraft (same JSON shape as recipe creation). "
-        "Keep the same `name` and `model`. Explain each change in `rationale`.\n"
+        "Keep the same `name` and `model`. Explain each change in "
+        "`rationale`."
     )
+    if cluster:
+        total = cluster.get("total_gpus", 0)
+        parts.append(
+            f"REMINDER: target is a {len(cluster.get('nodes') or [])}-node "
+            f"cluster with {total} total GPUs. The product of "
+            f"--tensor-parallel-size and --pipeline-parallel-size in the "
+            f"revised recipe MUST equal {total}. If the existing recipe "
+            f"is undersized for the cluster (e.g. tp=1 against {total} "
+            f"GPUs), upsize it; if oversized, downsize."
+        )
+    return "\n".join(parts) + "\n"
 
 
 def build_mod_prompt(*, error_log: str, model_id: str) -> str:
