@@ -106,6 +106,21 @@ class RecipeService:
                     issues.append(
                         f"--gpu-memory-utilization={gmu} must be in (0, 1]"
                     )
+
+        # Tool-call configuration: vLLM rejects --tool-call-parser unless
+        # --enable-auto-tool-choice is also set. Surface this pre-flight
+        # rather than letting it get to vLLM and crash mid-startup with
+        # `"auto" tool choice requires --enable-auto-tool-choice and
+        # --tool-call-parser to be set`.
+        tcp = recipe.args.get("--tool-call-parser")
+        eatc = recipe.args.get("--enable-auto-tool-choice")
+        if tcp and not _is_true(eatc):
+            issues.append(
+                f"--tool-call-parser={tcp!r} requires "
+                "--enable-auto-tool-choice=true to also be set "
+                "(vLLM's auto tool choice needs both flags or neither)"
+            )
+
         return issues
 
     async def sync(
@@ -230,6 +245,17 @@ class RecipeService:
 # ---------- module-level helpers ----------
 
 
+def _is_true(v: object) -> bool:
+    """Liberal truthy check for recipe arg values, which arrive as strings
+    from YAML. Used by the validator to recognize `--enable-auto-tool-choice:
+    true` (or `'true'`, or yaml-bool `True`) as actually enabled."""
+    if v is True:
+        return True
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "1", "yes", "on")
+    return False
+
+
 # Args whose value is a flag-only boolean — emitting `--trust-remote-code true`
 # breaks vLLM (it reads "true" as a positional). For these, when the recipe's
 # args dict has the value "true"/"True"/"" we emit only the flag.
@@ -239,6 +265,7 @@ _BOOL_FLAG_ARGS = frozenset(
         "--enforce-eager",
         "--enable-prefix-caching",
         "--enable-chunked-prefill",
+        "--enable-auto-tool-choice",
         "--disable-log-stats",
         "--disable-log-requests",
     }

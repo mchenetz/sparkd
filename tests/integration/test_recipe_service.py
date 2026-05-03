@@ -119,6 +119,56 @@ async def test_validate_warns_when_tp_pp_leaves_gpus_idle_in_cluster(svc, monkey
     assert any("idle" in i for i in issues)
 
 
+async def test_validate_rejects_tool_call_parser_without_enable_auto_tool_choice(svc, monkeypatch):
+    """vLLM crashes mid-startup with `'auto' tool choice requires
+    --enable-auto-tool-choice and --tool-call-parser to be set` when a
+    parser is configured without enabling auto. Catch this in pre-flight
+    so the user sees a clear message instead of a 60-second container
+    crash + reconciler-marked-interrupted."""
+    rs, box_svc, _, _ = svc
+    bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
+
+    async def fake_caps(*_a, **_k):
+        return _caps(2)
+
+    monkeypatch.setattr(box_svc, "capabilities", fake_caps)
+    r = RecipeSpec(
+        name="r",
+        model="m",
+        args={
+            "--tensor-parallel-size": "2",
+            "--tool-call-parser": "qwen3_coder",
+            # NOTE: missing --enable-auto-tool-choice
+        },
+    )
+    issues = await rs.validate(r, bs.id)
+    assert any("--tool-call-parser" in i for i in issues)
+    assert any("--enable-auto-tool-choice" in i for i in issues)
+
+
+async def test_validate_accepts_tool_call_parser_with_enable_auto_tool_choice(svc, monkeypatch):
+    """The matched pair is fine."""
+    rs, box_svc, _, _ = svc
+    bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
+
+    async def fake_caps(*_a, **_k):
+        return _caps(2)
+
+    monkeypatch.setattr(box_svc, "capabilities", fake_caps)
+    r = RecipeSpec(
+        name="r",
+        model="m",
+        args={
+            "--tensor-parallel-size": "2",
+            "--tool-call-parser": "qwen3_coder",
+            "--enable-auto-tool-choice": "true",
+        },
+    )
+    issues = await rs.validate(r, bs.id)
+    # The tool-call rule produces no issue when both are set.
+    assert not any("--tool-call-parser" in i for i in issues), issues
+
+
 async def test_validate_fails_when_tp_pp_exceeds_cluster_total(svc, monkeypatch):
     """tp=4 against a 2-GPU cluster is unsatisfiable — Ray will reject."""
     rs, box_svc, _, _ = svc
@@ -347,6 +397,30 @@ async def test_sync_regenerates_command_from_args_when_args_non_empty(svc):
     assert "--trust-remote-code true" not in blob
     assert "--gpu-memory-utilization 0.90" in blob
     assert "--max-model-len 8192" in blob
+
+
+async def test_sync_emits_enable_auto_tool_choice_as_bare_flag(svc):
+    """vLLM rejects `--enable-auto-tool-choice true` (the string "true"
+    is read as a positional). The renderer must emit it as a bare flag.
+    Same shape as --trust-remote-code."""
+    rs, box_svc, fake, _ = svc
+    bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
+    rs.library.save_recipe(
+        RecipeSpec(
+            name="tools",
+            model="org/m",
+            args={
+                "--tool-call-parser": "qwen3_coder",
+                "--enable-auto-tool-choice": "true",
+            },
+        )
+    )
+    await rs.sync("tools", bs.id)
+    blob = "\n".join(fake.received)
+    assert "--tool-call-parser qwen3_coder" in blob
+    assert "--enable-auto-tool-choice" in blob
+    # And NOT as `--enable-auto-tool-choice true`.
+    assert "--enable-auto-tool-choice true" not in blob
 
 
 async def test_sync_preserves_command_when_args_empty(svc):

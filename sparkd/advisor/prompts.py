@@ -20,6 +20,16 @@ schema. The recipe `args` keys must be the literal vLLM CLI flag names (e.g.
 "--tensor-parallel-size", "--gpu-memory-utilization", "--max-model-len", "--quantization").
 Values are strings.
 
+Flag pair rules vLLM enforces — set both together or neither:
+- `--tool-call-parser` requires `--enable-auto-tool-choice: "true"`. If the model
+  has tool-calling support and you want to expose it, include both. Otherwise
+  omit both — never set the parser without enabling auto choice.
+
+Boolean flags (`--enable-auto-tool-choice`, `--trust-remote-code`,
+`--enforce-eager`, `--enable-prefix-caching`, etc.) take the string value
+"true" in `args`. Sparkd renders them as bare flags on the command line —
+do not include `false` for these (omit instead).
+
 Be conservative. Prefer settings that fit comfortably in available VRAM with a margin.
 Explain trade-offs in `rationale` in one short paragraph.
 """
