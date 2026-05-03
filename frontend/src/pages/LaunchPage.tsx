@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 
 import { Card, EmptyState, Pill } from "../components/Card";
 import InspectModal from "../components/InspectModal";
+import LaunchExitInfo from "../components/LaunchExitInfo";
 import LiveLog from "../components/LiveLog";
 import PageHeader from "../components/PageHeader";
 import TargetSelect from "../components/TargetSelect";
@@ -332,6 +333,7 @@ function ActiveLaunch({ launch }: { launch: Launch }) {
           </button>
         </div>
       </div>
+      <LaunchExitInfo exitInfo={launch.exit_info} />
       <LiveLog launchId={launch.id} />
       {inspectOpen && (
         <InspectModal launchId={launch.id} onClose={() => setInspectOpen(false)} />
@@ -376,6 +378,7 @@ function HistoryRow({ launch }: { launch: Launch }) {
           </button>
         </div>
       </div>
+      <LaunchExitInfo exitInfo={launch.exit_info} />
       {showLogs && <LiveLog launchId={launch.id} />}
     </Card>
   );

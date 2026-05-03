@@ -329,6 +329,7 @@ class LaunchService:
         *,
         container_id: str | None = None,
         stopped: bool = False,
+        exit_info: dict | None = None,
     ) -> LaunchRecord:
         async with session_scope() as s:
             row = await s.get(Launch, launch_id)
@@ -339,6 +340,8 @@ class LaunchService:
                 row.container_id = container_id
             if stopped:
                 row.stopped_at = datetime.now(timezone.utc)
+            if exit_info is not None:
+                row.exit_info_json = exit_info
             return _to_record(row)
 
     # ---------- public actions ----------
@@ -467,13 +470,18 @@ class LaunchService:
 
         if cid is None:
             # No container. If we previously saw it healthy, it crashed
-            # or got removed → mark interrupted. If we never saw it
-            # ("starting"), keep that state — upstream may still be
-            # downloading the model image / weights, which is slow on
-            # first launch.
+            # or got removed → mark interrupted, capturing the tail of
+            # the launch log so the user can see *why* without digging.
+            # If we never saw it ("starting"), keep that state — upstream
+            # may still be downloading the model image / weights, which
+            # is slow on first launch.
             if current_state == "healthy":
+                exit_info = await self._capture_exit_info(launch_id, target)
                 await self._set_state(
-                    launch_id, LaunchState.interrupted, stopped=True
+                    launch_id,
+                    LaunchState.interrupted,
+                    stopped=True,
+                    exit_info=exit_info,
                 )
             return
 
@@ -510,3 +518,79 @@ class LaunchService:
                 return r.status_code == 200
             except (httpx.HTTPError, ValueError):
                 return False
+
+    async def _capture_exit_info(
+        self, launch_id: str, target: SSHTarget
+    ) -> dict:
+        """Capture a snapshot of the launch log when transitioning to a
+        terminal state, so the UI can show *why* it died without the user
+        having to ssh in and tail logs by hand. Best-effort — if the log
+        is unreadable, return what we have.
+
+        Schema:
+          {
+            "tail": [<last N lines, oldest first>],
+            "reason": "<best-effort one-liner from tail>",
+            "captured_at": "<ISO 8601>",
+          }
+        """
+        async with session_scope() as s:
+            row = await s.get(Launch, launch_id)
+            if row is None:
+                return {}
+            log_path = row.log_path or f"~/.sparkd-launches/{launch_id}.log"
+
+        # tail -n 30 — small enough to round-trip cheaply, large enough
+        # to capture a Python traceback's "core" lines.
+        tail_lines: list[str] = []
+        try:
+            result = await self.pool.run(
+                target, f"tail -n 30 {shlex.quote(log_path)} 2>/dev/null"
+            )
+            if result.exit_status == 0:
+                tail_lines = [
+                    ln for ln in result.stdout.splitlines() if ln.strip()
+                ]
+        except Exception:  # noqa: BLE001
+            pass
+
+        return {
+            "tail": tail_lines,
+            "reason": _extract_reason(tail_lines),
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+
+def _extract_reason(tail: list[str]) -> str:
+    """Best-effort one-liner explanation pulled from a launch log tail.
+
+    Looks (in priority order) for: an OSError/RuntimeError/ValueError
+    style line, a 'Tensor parallel' / 'CUDA out of memory' line, or any
+    line starting with 'Error:'/'ERROR:'. Falls back to the last
+    non-empty line. Truncated to 200 chars so the UI can render inline.
+    """
+    if not tail:
+        return ""
+    # Priority 1: explicit Python exception lines (last one wins — usually
+    # the actual cause vs intermediate stack frames).
+    exc_pattern = (
+        "Error:", "Exception:", "OSError:", "RuntimeError:",
+        "ValueError:", "KeyError:", "TypeError:", "ImportError:",
+        "AssertionError:", "MemoryError:",
+    )
+    for line in reversed(tail):
+        for marker in exc_pattern:
+            if marker in line:
+                return _truncate(line.strip())
+    # Priority 2: vLLM's known fatal warnings.
+    for line in reversed(tail):
+        for marker in ("CUDA out of memory", "Tensor parallel", "FATAL"):
+            if marker in line:
+                return _truncate(line.strip())
+    # Fallback: last non-empty line.
+    return _truncate(tail[-1].strip())
+
+
+def _truncate(s: str, n: int = 200) -> str:
+    s = s.strip()
+    return s if len(s) <= n else s[: n - 1] + "…"

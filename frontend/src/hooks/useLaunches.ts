@@ -10,6 +10,12 @@ export type LaunchState =
   | "stopped"
   | "interrupted";
 
+export type ExitInfo = {
+  reason: string;
+  tail: string[];
+  captured_at: string;
+};
+
 export type Launch = {
   id: string;
   box_id: string;
@@ -21,6 +27,7 @@ export type Launch = {
   log_path: string | null;
   started_at: string;
   stopped_at: string | null;
+  exit_info: ExitInfo | null;
 };
 
 export const ACTIVE_STATES: LaunchState[] = ["starting", "healthy", "paused"];

@@ -162,6 +162,51 @@ async def test_reconcile_skips_terminal_states(env):
     assert fetched.state == LaunchState.stopped
 
 
+async def test_reconcile_captures_exit_info_when_marking_interrupted(env):
+    """When the reconciler transitions a healthy launch to interrupted
+    (container vanished), it should snapshot the tail of the launch log
+    and store it on `LaunchRecord.exit_info` so the UI can show the user
+    why it died — without forcing them to ssh in and tail logs by hand."""
+    ls, box_svc, lib, _fake, _port, monkeypatch = env
+    rec = await _start_launch(ls, box_svc, lib)
+    await ls._set_state(rec.id, LaunchState.healthy, container_id="abc12345")
+
+    # Container is gone.
+    async def fake_resolve(_self, _launch_id):
+        return None, None, None
+
+    monkeypatch.setattr(LaunchService, "_resolve_container", fake_resolve)
+
+    # And the launch log on the box ends with a real-looking traceback.
+    captured_log_tail = [
+        "(APIServer pid=550) Traceback (most recent call last):",
+        "(APIServer pid=550)   File \"vllm/serve.py\", line 100, in main",
+        "(APIServer pid=550) OSError: Can't load image processor for "
+        "'org/some-model'. ...preprocessor_config.json...",
+        "Stopping cluster...",
+        "Cluster stopped.",
+    ]
+
+    async def fake_capture(_self, _launch_id, _target):
+        return {
+            "tail": captured_log_tail,
+            "reason": (
+                "OSError: Can't load image processor for 'org/some-model'."
+                " ...preprocessor_config.json..."
+            ),
+            "captured_at": "2026-05-02T20:00:00+00:00",
+        }
+
+    monkeypatch.setattr(LaunchService, "_capture_exit_info", fake_capture)
+
+    await ls.reconcile_active()
+    fetched = await ls.get(rec.id)
+    assert fetched.state == LaunchState.interrupted
+    assert fetched.exit_info is not None
+    assert fetched.exit_info["reason"].startswith("OSError")
+    assert len(fetched.exit_info["tail"]) == 5
+
+
 async def test_reconcile_swallows_per_launch_errors(env):
     """One launch's reconcile failing must not abort the others — the
     background loop runs under all-or-nothing semantics from the user's
