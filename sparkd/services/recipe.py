@@ -10,6 +10,21 @@ from sparkd.services.library import LibraryService
 from sparkd.ssh.pool import SSHPool
 
 
+class _LiteralStr(str):
+    """Marker subclass — when this hits the YAML representer below, it's
+    emitted as a literal-block scalar (`|`) instead of getting wrapped
+    into a quoted style with line continuations. We use it for the
+    `command:` field so the multi-line vLLM invocation reads naturally
+    on disk and on the box."""
+
+
+def _literal_str_representer(dumper: yaml.SafeDumper, data: _LiteralStr) -> yaml.ScalarNode:
+    return dumper.represent_scalar("tag:yaml.org,2002:str", str(data), style="|")
+
+
+yaml.SafeDumper.add_representer(_LiteralStr, _literal_str_representer)
+
+
 class RecipeService:
     def __init__(
         self, library: LibraryService, boxes: BoxService, pool: SSHPool
@@ -18,21 +33,68 @@ class RecipeService:
         self.boxes = boxes
         self.pool = pool
 
-    async def validate(self, recipe: RecipeSpec, box_id: str) -> list[str]:
+    async def validate(
+        self,
+        recipe: RecipeSpec,
+        box_id: str,
+        *,
+        cluster: dict | None = None,
+    ) -> list[str]:
+        """Pre-flight checks against the *target's* GPU budget.
+
+        For a single-box target, the budget is the box's `gpu_count`. For
+        a cluster, it's the cluster's `total_gpus`. Validates:
+          - tp × pp must fit the budget (was: just tp ≤ head.gpu_count,
+            which silently rejected legitimate cluster recipes like
+            tp=2 against a 2-node-of-1-GPU cluster because the head only
+            has 1 GPU)
+          - --gpu-memory-utilization is in (0, 1]
+        """
         caps = await self.boxes.capabilities(box_id)
         issues: list[str] = []
+        if cluster:
+            gpu_budget = int(cluster.get("total_gpus", 0)) or caps.gpu_count
+            budget_label = (
+                f"{gpu_budget} GPUs across cluster "
+                f"'{cluster.get('name', '?')}'"
+            )
+        else:
+            gpu_budget = caps.gpu_count
+            budget_label = f"{gpu_budget} GPUs on this box"
+
         tp_raw = recipe.args.get("--tensor-parallel-size")
+        pp_raw = recipe.args.get("--pipeline-parallel-size", "1")
+        tp: int | None = None
+        pp: int | None = None
         if tp_raw is not None:
             try:
                 tp = int(tp_raw)
             except ValueError:
-                issues.append(f"--tensor-parallel-size not an integer: {tp_raw!r}")
-            else:
-                if tp > caps.gpu_count:
-                    issues.append(
-                        f"--tensor-parallel-size={tp} exceeds GPU count "
-                        f"{caps.gpu_count} on this box"
-                    )
+                issues.append(
+                    f"--tensor-parallel-size not an integer: {tp_raw!r}"
+                )
+        try:
+            pp = int(pp_raw)
+        except ValueError:
+            issues.append(
+                f"--pipeline-parallel-size not an integer: {pp_raw!r}"
+            )
+            pp = None
+        if tp is not None and pp is not None:
+            product = tp * pp
+            if product > gpu_budget:
+                issues.append(
+                    f"tp×pp={product} (--tensor-parallel-size={tp}, "
+                    f"--pipeline-parallel-size={pp}) exceeds {budget_label}"
+                )
+            elif cluster and product != gpu_budget:
+                # Soft warning: leaving GPUs idle on a cluster target
+                # is almost certainly a mistake.
+                issues.append(
+                    f"tp×pp={product} leaves {gpu_budget - product} GPU(s) "
+                    f"idle on {budget_label}"
+                )
+
         gmu_raw = recipe.args.get("--gpu-memory-utilization")
         if gmu_raw is not None:
             try:
@@ -76,27 +138,52 @@ class RecipeService:
         data = yaml.safe_load(yaml_text) or {}
         mutated = False
 
-        # Defensive: mirror top-level `model:` into `defaults.model` if the
-        # command references `{model}` and defaults doesn't already have it.
-        # Upstream's run-recipe.py uses `defaults` as the str.format namespace
-        # and treats the top-level `model:` field as metadata only — so a
-        # command with `{model}` and no `defaults.model` crashes with
-        # "Missing parameter in recipe command: 'model'". This unbreaks
-        # recipes saved by older sparkd versions whose renderer omitted the
-        # mirror, without requiring manual edits.
-        command = data.get("command") or ""
+        # When the recipe carries a non-empty `args:` block (typical of
+        # sparkd-rendered and advisor-generated recipes), regenerate the
+        # `command` template so every flag in args actually reaches vLLM.
+        #
+        # Why: the renderer emits `args:` as informational metadata next
+        # to a hand-curated `command` template that uses `{var}`
+        # substitutions from `defaults`. Flags the advisor adds (like
+        # `--pipeline-parallel-size`, `--quantization`,
+        # `--distributed-executor-backend`, `--trust-remote-code`) live
+        # only in `args` and never reach the command line — and even
+        # `--tensor-parallel-size` doesn't, because the template's
+        # `{tensor_parallel}` reads `defaults.tensor_parallel` (often
+        # stale), not `args.--tensor-parallel-size`. Net effect: the
+        # advisor's tp=2 / pp=1 / quantization recipe launches as `-tp 1`
+        # with no quantization. Bridge here so args is the source of
+        # truth.
+        #
+        # Recipes with empty `args:` (upstream-format with curated
+        # commands) pass through unchanged.
+        args_dict = data.get("args") or {}
         top_model = data.get("model")
-        if (
-            isinstance(command, str)
-            and "{model}" in command
-            and isinstance(top_model, str)
-            and top_model
-        ):
-            defaults = data.get("defaults") or {}
-            if isinstance(defaults, dict) and "model" not in defaults:
-                defaults["model"] = top_model
-                data["defaults"] = defaults
-                mutated = True
+        if isinstance(args_dict, dict) and args_dict:
+            data["command"] = _LiteralStr(_command_from_args(args_dict))
+            # Ensure {model} resolves: defaults.model mirrors top-level.
+            if isinstance(top_model, str) and top_model:
+                defaults = data.get("defaults") or {}
+                if isinstance(defaults, dict) and "model" not in defaults:
+                    defaults["model"] = top_model
+                    data["defaults"] = defaults
+            mutated = True
+        else:
+            # No args → fall back to the legacy mirror-into-defaults fix
+            # for upstream-format recipes that reference {model} but lack
+            # `defaults.model`.
+            command = data.get("command") or ""
+            if (
+                isinstance(command, str)
+                and "{model}" in command
+                and isinstance(top_model, str)
+                and top_model
+            ):
+                defaults = data.get("defaults") or {}
+                if isinstance(defaults, dict) and "model" not in defaults:
+                    defaults["model"] = top_model
+                    data["defaults"] = defaults
+                    mutated = True
 
         # Strip + merge env entries if requested.
         if extra_env or strip_env_keys:
@@ -136,12 +223,61 @@ class RecipeService:
         )
         await self.pool.run(target, cmd)
 
-    def diff(self, a: RecipeSpec, b: RecipeSpec) -> RecipeDiff:
-        added = {k: v for k, v in b.args.items() if k not in a.args}
-        removed = {k: v for k, v in a.args.items() if k not in b.args}
-        changed = {
-            k: (a.args[k], b.args[k])
-            for k in a.args.keys() & b.args.keys()
-            if a.args[k] != b.args[k]
-        }
-        return RecipeDiff(name=a.name, added=added, removed=removed, changed=changed)
+    def diff(self, a: RecipeSpec, b: RecipeSpec) -> RecipeDiff:  # type: ignore[override]
+        return _diff_specs(a, b)
+
+
+# ---------- module-level helpers ----------
+
+
+# Args whose value is a flag-only boolean — emitting `--trust-remote-code true`
+# breaks vLLM (it reads "true" as a positional). For these, when the recipe's
+# args dict has the value "true"/"True"/"" we emit only the flag.
+_BOOL_FLAG_ARGS = frozenset(
+    {
+        "--trust-remote-code",
+        "--enforce-eager",
+        "--enable-prefix-caching",
+        "--enable-chunked-prefill",
+        "--disable-log-stats",
+        "--disable-log-requests",
+    }
+)
+
+
+def _command_from_args(args: dict) -> str:
+    """Render a vLLM serve command line from a recipe's args dict.
+
+    Returns a multi-line bash command (literal block scalar style — no
+    `|` prefix; the YAML serializer will pick the right form). The model
+    is templated as `{model}` so upstream's str.format substitution
+    against `defaults.model` keeps working — same convention as upstream
+    recipes use for the model id.
+    """
+    parts = ["vllm serve {model}"]
+    for k, v in args.items():
+        v_str = str(v) if v is not None else ""
+        # Boolean-style: emit just the flag for known boolean args when
+        # the value is true-ish; skip entirely when explicitly false.
+        if k in _BOOL_FLAG_ARGS:
+            if v_str.lower() in ("true", "1", "yes", ""):
+                parts.append(k)
+            # else: false/0/no → omit the flag
+            continue
+        if v_str == "":
+            # Bare flag (unknown but no value) — emit just the flag.
+            parts.append(k)
+        else:
+            parts.append(f"{k} {v_str}")
+    return " \\\n  ".join(parts) + "\n"
+
+
+def _diff_specs(a: RecipeSpec, b: RecipeSpec) -> RecipeDiff:
+    added = {k: v for k, v in b.args.items() if k not in a.args}
+    removed = {k: v for k, v in a.args.items() if k not in b.args}
+    changed = {
+        k: (a.args[k], b.args[k])
+        for k in a.args.keys() & b.args.keys()
+        if a.args[k] != b.args[k]
+    }
+    return RecipeDiff(name=a.name, added=added, removed=removed, changed=changed)

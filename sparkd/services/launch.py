@@ -74,7 +74,28 @@ class LaunchService:
         resolved = await resolve_target(body.target, self.boxes)
         head_id = resolved.head_box.id
         recipe = self.library.load_recipe(body.recipe, box_id=head_id)
-        issues = await self.recipes.validate(recipe, head_id)
+        # Build cluster topology dict (matching the advisor's shape) so
+        # the validator can size tp×pp against the cluster's total GPUs
+        # rather than just the head box's GPU count. Without this, every
+        # cluster recipe with tp>head.gpu_count fails pre-flight even
+        # when it fits the cluster budget perfectly.
+        cluster_for_validate: dict | None = None
+        if resolved.kind == "cluster":
+            members_caps = []
+            for m in resolved.members:
+                try:
+                    c = await self.boxes.capabilities(m.id)
+                    members_caps.append(c.gpu_count)
+                except Exception:  # noqa: BLE001
+                    members_caps.append(0)
+            cluster_for_validate = {
+                "name": resolved.cluster_name,
+                "nodes": [{"gpu_count": g} for g in members_caps],
+                "total_gpus": sum(members_caps),
+            }
+        issues = await self.recipes.validate(
+            recipe, head_id, cluster=cluster_for_validate
+        )
         if issues:
             raise ValidationError(
                 "recipe failed pre-flight validation",

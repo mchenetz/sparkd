@@ -19,7 +19,7 @@ async def env(sparkd_home, fake_box, monkeypatch):
         ),
     )
 
-    async def fake_validate(_self, _spec, _box_id):
+    async def fake_validate(_self, _spec, _box_id, *, cluster=None):
         return []
 
     monkeypatch.setattr(type(app.state.recipes), "validate", fake_validate)

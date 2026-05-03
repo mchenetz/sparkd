@@ -61,7 +61,89 @@ async def test_validate_fails_when_tp_exceeds_gpus(svc, monkeypatch):
     monkeypatch.setattr(box_svc, "capabilities", fake_caps)
     r = RecipeSpec(name="r", model="m", args={"--tensor-parallel-size": "4"})
     issues = await rs.validate(r, bs.id)
-    assert any("tensor-parallel-size" in i for i in issues)
+    assert any("exceeds" in i for i in issues)
+
+
+async def test_validate_accepts_tp_when_cluster_total_gpus_match(svc, monkeypatch):
+    """A 2-node-of-1-GPU cluster has total_gpus=2. tp=2 should pass —
+    even though the head box's gpu_count is only 1. Without the cluster
+    kwarg, the old validator rejected this perfectly-sized recipe."""
+    rs, box_svc, _, _ = svc
+    bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
+
+    async def fake_caps(*_a, **_k):
+        return _caps(1)
+
+    monkeypatch.setattr(box_svc, "capabilities", fake_caps)
+    r = RecipeSpec(
+        name="r",
+        model="m",
+        args={"--tensor-parallel-size": "2", "--pipeline-parallel-size": "1"},
+    )
+    issues = await rs.validate(
+        r,
+        bs.id,
+        cluster={
+            "name": "alpha",
+            "nodes": [{"gpu_count": 1}, {"gpu_count": 1}],
+            "total_gpus": 2,
+        },
+    )
+    assert not any("exceeds" in i for i in issues), issues
+
+
+async def test_validate_warns_when_tp_pp_leaves_gpus_idle_in_cluster(svc, monkeypatch):
+    """tp=1 against a 2-GPU cluster fits but wastes a GPU. Surface that
+    as an issue so the user notices before launching at half capacity."""
+    rs, box_svc, _, _ = svc
+    bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
+
+    async def fake_caps(*_a, **_k):
+        return _caps(1)
+
+    monkeypatch.setattr(box_svc, "capabilities", fake_caps)
+    r = RecipeSpec(
+        name="r",
+        model="m",
+        args={"--tensor-parallel-size": "1", "--pipeline-parallel-size": "1"},
+    )
+    issues = await rs.validate(
+        r,
+        bs.id,
+        cluster={
+            "name": "alpha",
+            "nodes": [{"gpu_count": 1}, {"gpu_count": 1}],
+            "total_gpus": 2,
+        },
+    )
+    assert any("idle" in i for i in issues)
+
+
+async def test_validate_fails_when_tp_pp_exceeds_cluster_total(svc, monkeypatch):
+    """tp=4 against a 2-GPU cluster is unsatisfiable — Ray will reject."""
+    rs, box_svc, _, _ = svc
+    bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
+
+    async def fake_caps(*_a, **_k):
+        return _caps(1)
+
+    monkeypatch.setattr(box_svc, "capabilities", fake_caps)
+    r = RecipeSpec(
+        name="r",
+        model="m",
+        args={"--tensor-parallel-size": "4", "--pipeline-parallel-size": "1"},
+    )
+    issues = await rs.validate(
+        r,
+        bs.id,
+        cluster={
+            "name": "alpha",
+            "nodes": [{"gpu_count": 1}, {"gpu_count": 1}],
+            "total_gpus": 2,
+        },
+    )
+    assert any("exceeds" in i for i in issues)
+    assert any("cluster" in i for i in issues)
 
 
 async def test_sync_writes_yaml_to_box_repo(svc):
@@ -228,6 +310,66 @@ async def test_sync_strip_env_keys_combined_with_extra_env(svc):
     blob = "\n".join(fake.received)
     assert "VLLM_HOST_IP" not in blob
     assert "OMP_NUM_THREADS: " in blob
+
+
+async def test_sync_regenerates_command_from_args_when_args_non_empty(svc):
+    """When the recipe carries an `args:` block (typical of sparkd-rendered
+    and advisor-generated recipes), sync regenerates the `command` so every
+    flag in args actually reaches vLLM. Without this, advisor flags like
+    `--pipeline-parallel-size` and `--quantization` get dropped on the
+    floor — they live only in `args:` and never reach the command line."""
+    rs, box_svc, fake, _ = svc
+    bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
+    rs.library.save_recipe(
+        RecipeSpec(
+            name="advisor",
+            model="org/some-model",
+            args={
+                "--tensor-parallel-size": "2",
+                "--pipeline-parallel-size": "1",
+                "--quantization": "modelopt_fp4",
+                "--distributed-executor-backend": "ray",
+                "--trust-remote-code": "true",
+                "--gpu-memory-utilization": "0.90",
+                "--max-model-len": "8192",
+            },
+        )
+    )
+    await rs.sync("advisor", bs.id)
+    blob = "\n".join(fake.received)
+    # Every advisor-set flag is in the command we shipped.
+    assert "--tensor-parallel-size 2" in blob
+    assert "--pipeline-parallel-size 1" in blob
+    assert "--quantization modelopt_fp4" in blob
+    assert "--distributed-executor-backend ray" in blob
+    # Boolean flag is emitted as a bare flag, not as `--trust-remote-code true`.
+    assert "--trust-remote-code\n" in blob or "--trust-remote-code " in blob
+    assert "--trust-remote-code true" not in blob
+    assert "--gpu-memory-utilization 0.90" in blob
+    assert "--max-model-len 8192" in blob
+
+
+async def test_sync_preserves_command_when_args_empty(svc):
+    """Upstream-format recipes (hand-curated commands, empty `args:`) must
+    pass through unchanged. Only the args-driven path regenerates."""
+    rs, box_svc, fake, _ = svc
+    bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
+    raw = (
+        "name: upstream\n"
+        "model: org/m\n"
+        "container: vllm-node\n"
+        "args: {}\n"
+        "defaults:\n"
+        "  port: 8000\n"
+        "  tensor_parallel: 4\n"
+        "command: |\n"
+        "  vllm serve org/m --port {port} -tp {tensor_parallel}\n"
+    )
+    rs.library.save_recipe_raw("upstream", raw)
+    await rs.sync("upstream", bs.id)
+    blob = "\n".join(fake.received)
+    # Original templated command is still there — we did not regenerate.
+    assert "vllm serve org/m --port {port} -tp {tensor_parallel}" in blob
 
 
 async def test_sync_without_extra_env_passes_yaml_byte_identical(svc):
