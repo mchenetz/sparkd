@@ -1,6 +1,7 @@
-import { Eye, Network, Pause, Play, RotateCcw, Square, Trash2 } from "lucide-react";
+import { AlertCircle, Eye, Network, Pause, Play, RotateCcw, Square, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { formatApiError } from "../api/client";
 import { Card, EmptyState, Pill } from "../components/Card";
 import InspectModal from "../components/InspectModal";
 import LaunchExitInfo from "../components/LaunchExitInfo";
@@ -207,6 +208,66 @@ export default function LaunchPage() {
             </span>
           </button>
         </div>
+        {create.error && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: "10px 12px",
+              borderRadius: "var(--radius-sm)",
+              border: "1px solid var(--signal-danger)",
+              background: "rgba(255,89,97,0.08)",
+              color: "var(--signal-danger)",
+              fontSize: 12,
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 8,
+            }}
+          >
+            <AlertCircle
+              size={14}
+              style={{ flexShrink: 0, marginTop: 1 }}
+            />
+            <div style={{ flex: 1 }}>
+              <div
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 11,
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  color: "var(--signal-danger)",
+                  marginBottom: 2,
+                }}
+              >
+                launch failed
+              </div>
+              <div
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  color: "var(--fg-secondary)",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {formatApiError(create.error)}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => create.reset()}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "var(--fg-muted)",
+                cursor: "pointer",
+                fontFamily: "var(--font-mono)",
+                fontSize: 11,
+                padding: 0,
+              }}
+            >
+              dismiss
+            </button>
+          </div>
+        )}
       </Card>
 
       <div style={{ display: "grid", gap: 16 }}>

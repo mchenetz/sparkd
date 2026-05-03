@@ -8,6 +8,35 @@ export class ApiError extends Error {
   }
 }
 
+/** Pull the most useful human message out of any error a mutation might
+ * throw. Sparkd domain errors return application/problem+json with
+ * `detail`/`title`; FastAPI validation errors return `{detail: [...]}`
+ * arrays; plain Errors expose `.message`. Falls back to the status code
+ * + body so a 500 with no body still shows *something*. */
+export function formatApiError(err: unknown): string {
+  if (err instanceof ApiError) {
+    const body = err.body as Record<string, unknown> | null;
+    if (body && typeof body === "object") {
+      const detail = body.detail;
+      if (typeof detail === "string") return detail;
+      if (Array.isArray(detail)) {
+        // FastAPI validation: [{loc, msg, type}, ...]
+        return detail
+          .map((d) =>
+            typeof d === "object" && d && "msg" in d
+              ? String((d as { msg: unknown }).msg)
+              : JSON.stringify(d),
+          )
+          .join("; ");
+      }
+      if (typeof body.title === "string") return body.title;
+    }
+    return `${err.status}: ${JSON.stringify(body)}`;
+  }
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   // All HTTP endpoints live under /api on the backend; SPA owns the rest of
   // the URL space so /recipes/:name doesn't collide with the API.
