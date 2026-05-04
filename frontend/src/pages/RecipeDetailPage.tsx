@@ -201,11 +201,23 @@ export default function RecipeDetailPage() {
                     placeholder="meta-llama/Llama-3.1-8B-Instruct"
                   />
                 </Field>
-                <Field label="description">
-                  <input
+                <Field
+                  label="description"
+                  hint="multi-line — explain what this recipe is for, model trade-offs, anything the launcher should know"
+                >
+                  <textarea
                     value={draft.description ?? ""}
                     onChange={(e) => setField("description", e.target.value)}
                     placeholder="optional human-readable summary"
+                    rows={5}
+                    style={{
+                      width: "100%",
+                      resize: "vertical",
+                      minHeight: 90,
+                      lineHeight: 1.45,
+                      padding: "10px 12px",
+                      fontFamily: "var(--font-sans)",
+                    }}
                   />
                 </Field>
                 <Field
