@@ -110,6 +110,24 @@ class FleetSnapshot:
     )
 
 
+def _match_cid(
+    container_id: str, cid_map: dict[str, tuple[str, str]]
+) -> str | None:
+    """Return the launch_id whose recorded container_id matches `container_id`,
+    or None. Match is bidirectional-prefix to handle short-vs-full ids
+    (docker ps --format `{{.ID}}` returns 12 chars by default; the launch
+    row may store the full sha or the short form depending on when it
+    was captured)."""
+    for lid, (_recipe, recorded_cid) in cid_map.items():
+        if not recorded_cid:
+            continue
+        if container_id.startswith(recorded_cid[:12]):
+            return lid
+        if recorded_cid.startswith(container_id[:12]):
+            return lid
+    return None
+
+
 def reconcile(
     *,
     containers: list[DockerContainer],
@@ -118,18 +136,33 @@ def reconcile(
     vllm_healthy: bool,
     box_id: str = "",
     cluster_worker_recipe: str | None = None,
+    launches_by_cid: dict[str, tuple[str, str]] | None = None,
 ) -> BoxStatusSnapshot:
     """Match this box's docker containers to known launches.
 
-    `cluster_worker_recipe` (when set) tells the reconciler that this
-    box is a *worker* in a cluster with an active launch — the launch
-    DB row lives on the head's box_id, so without this hint a worker's
-    Ray-side vllm-node container would be labeled "external" forever.
-    Pass the cluster launch's recipe_name and vllm-node containers on
-    this box get tagged source="cluster-worker" with that recipe name.
+    Three ways a container is recognized as managed by sparkd, in order:
+
+    1. `sparkd.launch=<launch_id>` docker label matching a known launch
+       — historically the canonical path, but it's structurally
+       impossible to set on cluster launches because upstream's
+       launch-cluster.sh owns `docker run` and we can't inject --label.
+       Kept for completeness.
+    2. `launches_by_cid` map: when a launch row has recorded its
+       container's id (the reconciler does this on first
+       _resolve_container), we can match by that id and tag the
+       container "dashboard" without needing a docker label. This is
+       the path that recognizes the head's running container.
+    3. `cluster_worker_recipe` hint: when this box is a *worker* in a
+       cluster with an active launch, the launch DB row lives on the
+       head's box_id but THIS container is the worker side. Tag as
+       "cluster-worker" so the UI doesn't say EXTERNAL on a working
+       node. Only matches vllm-node images.
+
+    Anything left unmatched is genuinely external.
     """
     snap = BoxStatusSnapshot(box_id=box_id, connectivity="online")
     seen_launch_ids: set[str] = set()
+    cid_map = launches_by_cid or {}
     for c in containers:
         launch_id = c.labels.get("sparkd.launch")
         recipe_name: str | None = None
@@ -138,17 +171,23 @@ def reconcile(
             recipe_name = launches[launch_id]
             source = "dashboard"
             seen_launch_ids.add(launch_id)
-        elif (
-            cluster_worker_recipe
-            and c.image
-            and "vllm-node" in c.image
-        ):
-            # Cluster-worker side of an active cluster launch: the
-            # launch DB row is on the head, but THIS container is a
-            # worker for it. Surface that relationship explicitly so
-            # the UI doesn't show DOWN/EXTERNAL on a working node.
-            recipe_name = cluster_worker_recipe
-            source = "cluster-worker"
+        else:
+            # Try matching by recorded container_id — the launch row
+            # captures this once the reconciler resolves the container.
+            matched_lid = _match_cid(c.id, cid_map)
+            if matched_lid is not None:
+                lid, (recipe, _full_cid) = matched_lid, cid_map[matched_lid]
+                recipe_name = recipe
+                source = "dashboard"
+                launch_id = lid
+                seen_launch_ids.add(lid)
+            elif (
+                cluster_worker_recipe
+                and c.image
+                and "vllm-node" in c.image
+            ):
+                recipe_name = cluster_worker_recipe
+                source = "cluster-worker"
         model_id = vllm_models[0] if vllm_models else None
         # vLLM serves only from the head; a cluster-worker is "healthy"
         # iff the head's /health is 200 (passed in via vllm_healthy).
@@ -236,6 +275,11 @@ class StatusService:
                 )
             ).scalars().all()
             launches = {l.id: l.recipe_name for l in launch_rows}
+            launches_by_cid = {
+                l.id: (l.recipe_name, l.container_id)
+                for l in launch_rows
+                if l.container_id
+            }
 
         # Cluster context: am I a member of a cluster, and if so is
         # there an active launch on its head?
@@ -281,6 +325,7 @@ class StatusService:
             vllm_healthy=healthy,
             box_id=box_id,
             cluster_worker_recipe=cluster_worker_recipe,
+            launches_by_cid=launches_by_cid,
         )
         snap.connectivity = connectivity
         return snap

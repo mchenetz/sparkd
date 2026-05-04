@@ -98,3 +98,42 @@ def test_no_cluster_hint_keeps_legacy_external_behavior():
         vllm_healthy=False,
     )
     assert snap.running_models[0].source == "external"
+
+
+def test_match_by_recorded_container_id_tags_dashboard():
+    """The head of a cluster (or any sparkd-managed launch) shows its
+    running container as `dashboard`, not `external` — by matching the
+    launch row's recorded container_id, no docker label needed.
+
+    This was visible to the user as `[200] c5f6f1b7da2f [EXTERNAL]` on
+    a healthy cluster head: vLLM is up, the launch is sparkd's, but
+    the per-box reconciler couldn't prove it because cluster launches
+    can't carry a sparkd.launch docker label."""
+    snap = reconcile(
+        containers=[_vllm_node("c5f6f1b7da2f")],
+        launches={"L1": "qwen3-cluster"},
+        vllm_models=["org/m"],
+        vllm_healthy=True,
+        launches_by_cid={"L1": ("qwen3-cluster", "c5f6f1b7da2fxxxxxxxxxx")},
+    )
+    rm = snap.running_models[0]
+    assert rm.source == "dashboard"
+    assert rm.recipe_name == "qwen3-cluster"
+    assert rm.launch_id == "L1"
+    # And the launch is no longer in drift_missing_container.
+    assert "L1" not in snap.drift_missing_container
+
+
+def test_cid_match_falls_back_to_cluster_worker_when_no_match():
+    """A vllm-node container whose id doesn't match any recorded cid
+    AND whose box is a cluster worker still gets cluster-worker
+    treatment. The two paths don't conflict."""
+    snap = reconcile(
+        containers=[_vllm_node("workercid001")],
+        launches={},
+        vllm_models=["org/m"],
+        vllm_healthy=True,
+        launches_by_cid={"L_other": ("rec", "headcid999xxx")},
+        cluster_worker_recipe="qwen3-cluster",
+    )
+    assert snap.running_models[0].source == "cluster-worker"
