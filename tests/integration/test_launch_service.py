@@ -13,6 +13,16 @@ from sparkd.services.recipe import RecipeService
 from sparkd.ssh.pool import SSHPool, SSHTarget
 
 
+@pytest.fixture(autouse=True)
+def _no_hf_token_by_default(monkeypatch):
+    """LaunchService injects HF_TOKEN when sparkd.secrets has one — but
+    tests run on the developer's machine where the real keyring may
+    have a token from manual sparkd use. Default tests to "no token"
+    so they stay deterministic; specific tests override to test the
+    injection explicitly."""
+    monkeypatch.setattr("sparkd.secrets.get_secret", lambda key: None)
+
+
 @pytest.fixture
 async def env(sparkd_home, fake_box, monkeypatch):
     await init_engine(create_all=True)
@@ -153,6 +163,83 @@ async def test_cluster_launch_strips_dollar_local_ip_entries(
 
     keys = set(captured["strip_env_keys"] or [])
     assert keys == {"VLLM_HOST_IP", "RAY_NODE_IP_ADDRESS"}
+
+
+async def test_launch_injects_hf_token_when_set_in_keyring(
+    env, monkeypatch
+):
+    """When the user has set an HF token in sparkd Settings, every
+    launch (single-box and cluster) must inject HF_TOKEN +
+    HUGGING_FACE_HUB_TOKEN into the recipe's env. Without this, vLLM
+    inside the container downloads anonymously: hits HF rate limits
+    and can't access gated models."""
+    ls, box_svc, lib, fake, _ = env
+    fake.set_default(stdout="12345\n", exit=0)
+    monkeypatch.setattr(
+        "sparkd.secrets.get_secret",
+        lambda key: "hf_test_token_xyz" if key == "hf_token" else None,
+    )
+    captured: dict = {}
+
+    async def spy_sync_files(name, box_id, mods, *, extra_env=None, strip_env_keys=None):
+        captured["extra_env"] = extra_env
+
+    monkeypatch.setattr(ls, "_sync_files", spy_sync_files)
+
+    bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
+    lib.save_recipe(RecipeSpec(name="r1", model="m"))
+    await ls.launch(LaunchCreate(recipe="r1", target=bs.id))
+
+    assert captured["extra_env"]["HF_TOKEN"] == "hf_test_token_xyz"
+    # Both env var names — vLLM and HF libraries check different ones.
+    assert (
+        captured["extra_env"]["HUGGING_FACE_HUB_TOKEN"] == "hf_test_token_xyz"
+    )
+
+
+async def test_launch_does_not_inject_hf_token_when_unset(env, monkeypatch):
+    """No token in keyring → no token in env. Empty extra_env should
+    sail through unchanged."""
+    ls, box_svc, lib, fake, _ = env
+    fake.set_default(stdout="12345\n", exit=0)
+    monkeypatch.setattr("sparkd.secrets.get_secret", lambda key: None)
+    captured: dict = {}
+
+    async def spy_sync_files(name, box_id, mods, *, extra_env=None, strip_env_keys=None):
+        captured["extra_env"] = extra_env
+
+    monkeypatch.setattr(ls, "_sync_files", spy_sync_files)
+
+    bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
+    lib.save_recipe(RecipeSpec(name="r1", model="m"))
+    await ls.launch(LaunchCreate(recipe="r1", target=bs.id))
+
+    assert "HF_TOKEN" not in (captured["extra_env"] or {})
+    assert "HUGGING_FACE_HUB_TOKEN" not in (captured["extra_env"] or {})
+
+
+async def test_launch_log_header_announces_hf_token_injection_without_value(
+    env, monkeypatch
+):
+    """The injection appears as a launch-header WARNING line so the
+    user sees it happened — but the actual token value never lands in
+    the log. The token only lives in the OS keyring and the synced
+    YAML on the box."""
+    ls, box_svc, lib, fake, _ = env
+    fake.set_default(stdout="12345\n", exit=0)
+    monkeypatch.setattr(
+        "sparkd.secrets.get_secret",
+        lambda key: "hf_supersecret_value" if key == "hf_token" else None,
+    )
+
+    bs = await box_svc.create(BoxCreate(name="b", host="h", user="u"))
+    lib.save_recipe(RecipeSpec(name="r1", model="m"))
+    await ls.launch(LaunchCreate(recipe="r1", target=bs.id))
+
+    blob = "\n".join(fake.received)
+    assert "HF_TOKEN injected from sparkd Settings" in blob
+    # Token value must NEVER reach the log file.
+    assert "hf_supersecret_value" not in blob
 
 
 async def test_single_box_launch_does_not_strip_or_inject_env(env, monkeypatch):

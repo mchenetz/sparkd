@@ -10,6 +10,7 @@ import httpx
 import yaml
 from sqlalchemy import select
 
+from sparkd import secrets as sparkd_secrets
 from sparkd.db.engine import session_scope
 from sparkd.db.models import Box, Launch
 from sparkd.errors import ConflictError, NotFoundError, ValidationError
@@ -113,6 +114,22 @@ class LaunchService:
             raw_recipe = {}
         container_image = (raw_recipe.get("container") or "vllm-node").strip()
         warnings: list[str] = []
+        # Inject the user's HF token, if set in Settings, so vLLM inside
+        # the container can download gated/rate-limited models without
+        # the "sending unauthenticated requests to the HF Hub" warning
+        # (and without the user having to bake the token into the recipe
+        # YAML — the token never lives on disk, only in the OS keyring
+        # and the per-launch synced YAML on the box). Both env-var names
+        # are set because vLLM and HF libraries each check different ones
+        # depending on version. setdefault semantics: if the recipe
+        # already pins a token (e.g. a different account for one
+        # specific recipe) we leave it alone.
+        extra_env: dict[str, str] = {}
+        hf_token = sparkd_secrets.get_secret("hf_token")
+        if hf_token:
+            extra_env["HF_TOKEN"] = hf_token
+            extra_env["HUGGING_FACE_HUB_TOKEN"] = hf_token
+            warnings.append("HF_TOKEN injected from sparkd Settings.")
         # At cluster sync time, strip env entries that reference $LOCAL_IP.
         # Why: upstream `run-recipe.py` writes the recipe's `env:` block as
         # `export KEY="VALUE"` lines into a bash script run inside each
@@ -159,7 +176,11 @@ class LaunchService:
                     f"Box Detail."
                 )
         await self._sync_files(
-            body.recipe, head_id, body.mods, strip_env_keys=strip_env_keys
+            body.recipe,
+            head_id,
+            body.mods,
+            extra_env=extra_env,
+            strip_env_keys=strip_env_keys,
         )
         launch_id = uuid.uuid4().hex[:12]
         log_path = f"~/.sparkd-launches/{launch_id}.log"
