@@ -214,6 +214,76 @@ async def test_fleet_snapshot_flags_orphan_launch_when_container_missing(
     assert "lid" + box["id"][:6] in data["drift_orphan_launches"]
 
 
+async def test_per_box_snapshot_marks_worker_container_as_cluster_worker(
+    client, monkeypatch
+):
+    """The per-box (BoxDetail) snapshot must also be cluster-aware.
+    Without this, BoxDetailPage shows DOWN/EXTERNAL for a healthy
+    worker — the bug the user saw at /boxes/<worker_id>."""
+    c, _app = client
+    head = await _make_box(c, "n1", "10.0.0.1", cluster="alpha")
+    worker = await _make_box(c, "n2", "10.0.0.2", cluster="alpha")
+
+    # docker ps on worker returns a vllm-node Ray-worker container.
+    async def fake_ps(self, box_id):
+        from sparkd.services.status import DockerContainer
+
+        if box_id == worker["id"]:
+            return (
+                "online",
+                [
+                    DockerContainer(
+                        id="workercid01",
+                        image="vllm-node",
+                        labels={},
+                        state="running",
+                    )
+                ],
+            )
+        return ("online", [])
+
+    monkeypatch.setattr(StatusService, "_docker_ps_safe", fake_ps)
+
+    # Stub the per-box _docker_ps as well (snapshot() uses this directly)
+    async def fake_docker_ps(self, box_id):
+        ok, c_list = await fake_ps(self, box_id)
+        return c_list
+
+    monkeypatch.setattr(StatusService, "_docker_ps", fake_docker_ps)
+
+    # /health probe always returns healthy — verifies that the worker
+    # snapshot probes the head (which is up), not its own port.
+    probe_calls = []
+
+    async def fake_probe(self, host, port=8000):
+        probe_calls.append(host)
+        return ["org/m"], True
+
+    monkeypatch.setattr(StatusService, "_vllm_probe", fake_probe)
+
+    # Active cluster launch on the head.
+    await _insert_launch(
+        head["id"],
+        cluster_name="alpha",
+        container_id="headcid001",
+        state="healthy",
+        recipe="qwen3-cluster",
+    )
+
+    # Hit the per-box endpoint for the WORKER.
+    r = await c.get(f"/api/boxes/{worker['id']}/status")
+    assert r.status_code == 200
+    data = r.json()
+    rm = data["running_models"]
+    assert len(rm) == 1
+    assert rm[0]["source"] == "cluster-worker"
+    assert rm[0]["recipe_name"] == "qwen3-cluster"
+    assert rm[0]["healthy"] is True
+    # And confirm we probed the HEAD's host, not the worker's.
+    assert "10.0.0.1" in probe_calls
+    assert "10.0.0.2" not in probe_calls
+
+
 async def test_fleet_snapshot_marks_offline_box_connectivity(client, monkeypatch):
     c, _app = client
     await _make_box(c, "solo", "10.0.0.99")

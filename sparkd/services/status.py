@@ -117,16 +117,41 @@ def reconcile(
     vllm_models: list[str],
     vllm_healthy: bool,
     box_id: str = "",
+    cluster_worker_recipe: str | None = None,
 ) -> BoxStatusSnapshot:
+    """Match this box's docker containers to known launches.
+
+    `cluster_worker_recipe` (when set) tells the reconciler that this
+    box is a *worker* in a cluster with an active launch — the launch
+    DB row lives on the head's box_id, so without this hint a worker's
+    Ray-side vllm-node container would be labeled "external" forever.
+    Pass the cluster launch's recipe_name and vllm-node containers on
+    this box get tagged source="cluster-worker" with that recipe name.
+    """
     snap = BoxStatusSnapshot(box_id=box_id, connectivity="online")
     seen_launch_ids: set[str] = set()
     for c in containers:
         launch_id = c.labels.get("sparkd.launch")
-        recipe_name = launches.get(launch_id) if launch_id else None
-        source = "dashboard" if launch_id and launch_id in launches else "external"
+        recipe_name: str | None = None
+        source = "external"
         if launch_id and launch_id in launches:
+            recipe_name = launches[launch_id]
+            source = "dashboard"
             seen_launch_ids.add(launch_id)
+        elif (
+            cluster_worker_recipe
+            and c.image
+            and "vllm-node" in c.image
+        ):
+            # Cluster-worker side of an active cluster launch: the
+            # launch DB row is on the head, but THIS container is a
+            # worker for it. Surface that relationship explicitly so
+            # the UI doesn't show DOWN/EXTERNAL on a working node.
+            recipe_name = cluster_worker_recipe
+            source = "cluster-worker"
         model_id = vllm_models[0] if vllm_models else None
+        # vLLM serves only from the head; a cluster-worker is "healthy"
+        # iff the head's /health is 200 (passed in via vllm_healthy).
         snap.running_models.append(
             RunningModel(
                 container_id=c.id,
@@ -187,6 +212,16 @@ class StatusService:
                 return [], False
 
     async def snapshot(self, box_id: str) -> BoxStatusSnapshot:
+        """Per-box snapshot, cluster-aware.
+
+        If this box is a *worker* in a cluster with an active launch:
+          - /health is probed on the *head's* host (vLLM only serves
+            from the head; probing this box's port 8000 always 404s).
+          - The cluster launch's recipe_name is passed to reconcile()
+            so the worker's vllm-node container shows source=
+            "cluster-worker" instead of "external".
+        For single-box targets and cluster heads, behavior is unchanged.
+        """
         async with session_scope() as s:
             box_row = await s.get(Box, box_id)
             if box_row is None:
@@ -201,18 +236,51 @@ class StatusService:
                 )
             ).scalars().all()
             launches = {l.id: l.recipe_name for l in launch_rows}
+
+        # Cluster context: am I a member of a cluster, and if so is
+        # there an active launch on its head?
+        cluster_worker_recipe: str | None = None
+        probe_host = host
+        try:
+            groups = await self.boxes.list_clusters()
+        except Exception:  # noqa: BLE001
+            groups = {}
+        for cname, members in groups.items():
+            if not any(m.id == box_id for m in members):
+                continue
+            head = members[0]
+            if head.id == box_id:
+                # I'm the head; default behavior is correct.
+                break
+            # I'm a worker. Probe the head's host for /health, and
+            # look up the cluster's active launch.
+            probe_host = head.host
+            async with session_scope() as s:
+                cluster_launch = (
+                    await s.execute(
+                        select(Launch).where(
+                            Launch.cluster_name == cname,
+                            Launch.state.in_(["starting", "healthy"]),
+                        )
+                    )
+                ).scalars().first()
+            if cluster_launch:
+                cluster_worker_recipe = cluster_launch.recipe_name
+            break
+
         try:
             containers = await self._docker_ps(box_id)
             connectivity = "online"
         except Exception:
             return BoxStatusSnapshot(box_id=box_id, connectivity="offline")
-        models, healthy = await self._vllm_probe(host)
+        models, healthy = await self._vllm_probe(probe_host)
         snap = reconcile(
             containers=containers,
             launches=launches,
             vllm_models=models,
             vllm_healthy=healthy,
             box_id=box_id,
+            cluster_worker_recipe=cluster_worker_recipe,
         )
         snap.connectivity = connectivity
         return snap

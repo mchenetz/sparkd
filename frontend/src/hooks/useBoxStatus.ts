@@ -11,7 +11,7 @@ export type BoxStatus = {
     recipe_name: string | null;
     vllm_model_id: string | null;
     healthy: boolean;
-    source: "dashboard" | "external";
+    source: "dashboard" | "external" | "cluster-worker";
   }>;
   drift_missing_container: string[];
   captured_at: string;

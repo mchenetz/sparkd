@@ -381,31 +381,55 @@ export default function BoxDetailPage() {
               <EmptyState title="No containers running" />
             ) : (
               <div style={{ display: "grid", gap: 6 }}>
-                {status.running_models.map((m) => (
-                  <div
-                    key={m.container_id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      fontFamily: "var(--font-mono)",
-                      fontSize: 12,
-                    }}
-                  >
-                    <Pill tone={m.healthy ? "healthy" : "warn"}>
-                      {m.healthy ? "200" : "down"}
-                    </Pill>
-                    <code>{m.container_id.slice(0, 12)}</code>
-                    {m.recipe_name ? (
-                      <span>{m.recipe_name}</span>
-                    ) : (
-                      <span style={{ color: "var(--fg-faint)" }}>—</span>
-                    )}
-                    <Pill tone={m.source === "dashboard" ? "info" : "neutral"}>
-                      {m.source}
-                    </Pill>
-                  </div>
-                ))}
+                {status.running_models.map((m) => {
+                  const isWorker = m.source === "cluster-worker";
+                  // Health pill: workers don't serve /health (vLLM is on
+                  // the head only). When this is a cluster-worker, the
+                  // backend already passed the head's /health into
+                  // m.healthy — show "follower" + that health rather
+                  // than the misleading "down".
+                  const healthLabel = isWorker
+                    ? m.healthy
+                      ? "follower"
+                      : "follower (head down)"
+                    : m.healthy
+                      ? "200"
+                      : "down";
+                  const healthTone: "healthy" | "warn" | "info" = isWorker
+                    ? m.healthy
+                      ? "info"
+                      : "warn"
+                    : m.healthy
+                      ? "healthy"
+                      : "warn";
+                  const sourceTone: "info" | "neutral" =
+                    m.source === "dashboard" || m.source === "cluster-worker"
+                      ? "info"
+                      : "neutral";
+                  const sourceLabel =
+                    m.source === "cluster-worker" ? "worker" : m.source;
+                  return (
+                    <div
+                      key={m.container_id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        fontFamily: "var(--font-mono)",
+                        fontSize: 12,
+                      }}
+                    >
+                      <Pill tone={healthTone}>{healthLabel}</Pill>
+                      <code>{m.container_id.slice(0, 12)}</code>
+                      {m.recipe_name ? (
+                        <span>{m.recipe_name}</span>
+                      ) : (
+                        <span style={{ color: "var(--fg-faint)" }}>—</span>
+                      )}
+                      <Pill tone={sourceTone}>{sourceLabel}</Pill>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </Card>
